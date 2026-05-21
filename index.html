@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>おこのこと</title>
+<style>
+body{display:flex;font-family:sans-serif}
+#left{width:150px;padding:10px}
+#right{flex:1;padding:10px}
+.content{display:none}
+.active{display:block}
+li{cursor:pointer}
+</style>
+</head>
+<body>
+
+<div id="left">
+<ul>
+<li onclick="show('A')">おこのこと</li>
+<li onclick="show('B')">おこ</li>
+<li onclick="show('C')">oko</li>
+<li onclick="show('D')">ahrex</li>
+<li onclick="show('E')">乃々乃</li>
+<li onclick="show('F')">五百枝</li>
+<li onclick="show('G')">のこと</li>
+</ul>
+</div>
+
+<div id="right">
+<div id="A" class="content active"><h2>おこのこと</h2><br>
+<img src="a1.webp" alt="画像a1">
+<img src="a2.webp" alt="画像a2">
+<img src="a3.webp" alt="画像a3">
+</div>
+<div id="B" class="content"><h2>おこ</h2><br>
+<img src="b1.webp" alt="画像b1">
+<img src="b2.webp" alt="画像b2">
+<img src="b3.webp" alt="画像b3">
+<img src="b4.webp" alt="画像b4">
+<img src="b5.webp" alt="画像b5">
+<img src="b6.webp" alt="画像b6">
+</div>
+<div id="C" class="content"><h2>oko</h2><br>
+<img src="c1.webp" alt="画像c1">
+<img src="c2.webp" alt="画像c2">
+<img src="c3.webp" alt="画像c3">
+<img src="c4.webp" alt="画像c4">
+<img src="c5.webp" alt="画像c5">
+<img src="c6.webp" alt="画像c6">
+</div>
+<div id="D" class="content"><h2>ahrex</h2><br>
+<img src="d1.webp" alt="画像d1">
+<img src="d2.webp" alt="画像d2">
+<img src="d3.webp" alt="画像d3">
+</div>
+<div id="E" class="content"><h2>乃々乃</h2><br>
+<img src="e1.webp" alt="画像e1">
+<img src="e2.webp" alt="画像e2">
+<img src="e3.webp" alt="画像e3">
+</div>
+<div id="F" class="content"><h2>五百枝</h2><br>
+<img src="f1.webp" alt="画像f1">
+<img src="f2.webp" alt="画像f2">
+<img src="f3.webp" alt="画像f3">
+</div>
+<div id="G" class="content"><h2>のこと</h2><br>
+<img src="g1.webp" alt="画像g1">
+<img src="g2.webp" alt="画像g2">
+<img src="g3.webp" alt="画像g3">
+</div>
+</div>
+
+<script>
+function show(id){
+document.querySelectorAll('.content').forEach(e=>e.classList.remove('active'));
+document.getElementById(id).classList.add('active');
+}
+</script>
+
+</body>
+</html>
