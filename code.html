@@ -1621,6 +1621,245 @@ elif ev == "-ML_SAVE-":
         except Exception as e:
             sg.popup_error(TEXTS[lang]["ML_INFO_FAIL"]+str(e))
 ■7■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def _lazy_import_scipy():
+    try:
+        from scipy import stats
+        return stats
+    except Exception:
+        return None
+
+def _lazy_import_sklearn():
+    try:
+        from sklearn.ensemble import GradientBoostingClassifier
+        return GradientBoostingClassifier
+    except Exception:
+        return None
+
+def shapiro_on_logs(rates_pos):
+    stats = _lazy_import_scipy()
+    if stats is None:
+        # 代替: 正規性検定はスキップ、μσだけ返す
+        logs = np.log(rates_pos)
+        mu = float(np.mean(logs))
+        sd = float(np.std(logs, ddof=1))
+        return np.nan, np.nan, mu, sd, logs
+    logs = np.log(rates_pos)
+    W, p = stats.shapiro(logs)
+    mu = float(np.mean(logs))
+    sd = float(np.std(logs, ddof=1))
+    return W, p, mu, sd, logs
+
+def train_ml_from_csv(...):
+    GBC = _lazy_import_sklearn()
+    if GBC is None:
+        raise RuntimeError("ML機能はこのビルドでは無効（scikit-learn未導入）")
+    ...
+■8■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+import sys, pathlib
+def size(p):
+    p=pathlib.Path(p)
+    return sum(f.stat().st_size for f in p.rglob('*') if f.is_file())
+
+pkgs = ['numpy','scipy','sklearn','matplotlib','pandas','PySimpleGUI','pyinstaller',
+        'six','pytz','dateutil','joblib']
+for name in pkgs:
+    try:
+        m = __import__(name)
+        d = pathlib.Path(m.__file__).parents[0]
+        print(f"{name:12} ~ {size(d)/1024/1024:6.1f} MB  -> {d}")
+    except Exception as e:
+        print(f"{name:12} (not installed)")
+■9■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+import os, sys
+root = sys.argv[1] if len(sys.argv)>1 else "."
+sizes = []
+for dp, dn, fn in os.walk(root):
+    for f in fn:
+        p = os.path.join(dp,f)
+        try: sizes.append((os.path.getsize(p), p))
+        except: pass
+sizes.sort(reverse=True)
+total = sum(s for s,_ in sizes)
+print(f"TOTAL: {total/1024/1024:.1f} MB\nTop 50 files:")
+for s,p in sizes[:50]:
+    print(f"{s/1024/1024:6.1f} MB  {p}")
+■10■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+import matplotlib
+matplotlib.use("TkAgg")
+■11■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+import numpy as np, math
+
+# 正規CDF（erfでOK）
+def norm_cdf(z):
+    return 0.5*(1.0 + math.erf(z / math.sqrt(2.0)))
+
+def anderson_darling_normal(x):
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    n = x.size
+    if n < 3:
+        return float('nan'), None  # データ不足
+    mu = np.mean(x); sd = np.std(x, ddof=1 if USE_STDEV_S else 0)
+    if sd <= 0:
+        return float('nan'), None
+    z = np.sort((x - mu)/sd)
+    # A^2*
+    F = np.clip([norm_cdf(zi) for zi in z], 1e-15, 1-1e-15)
+    i = np.arange(1, n+1)
+    S = np.sum((2*i-1) * (np.log(F) + np.log(1 - F[::-1])))
+    A2 = -n - S/n
+    # Stephens補正
+    A2_star = A2 * (1 + 4.0/n - 25.0/(n*n))
+    # 臨界値（5%なら0.787、1%なら1.092 など）
+    criticals = {0.15:0.576, 0.10:0.656, 0.05:0.787, 0.025:0.918, 0.01:1.092}
+    return A2_star, criticals
+■12■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+import numpy as np, math
+
+def jarque_bera(x):
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    n = x.size
+    if n < 8:
+        return float('nan'), float('nan')
+    m = np.mean(x); s2 = np.mean((x-m)**2)
+    s = math.sqrt(s2) if s2>0 else 0.0
+    if s==0: return float('nan'), float('nan')
+    skew = np.mean(((x-m)/s)**3)
+    kurt = np.mean(((x-m)/s)**4)
+    JB = n/6.0 * (skew**2 + ((kurt-3.0)**2)/4.0)
+    # 簡易p値（χ²2の上側確率）。厳密にしたければmpmath等を使う
+    # χ²2はexp(-JB/2)の一次近似で割と近い（ここでは臨界値比較推奨）
+    p_approx = math.exp(-JB/2.0) * (1 + JB/2.0)
+    return JB, p_approx
+■13■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+# Peter John Acklam の rational approximation
+def norm_ppf(u):
+    import math
+    if not (0.0 < u < 1.0):
+        if u == 0.0: return -math.inf
+        if u == 1.0: return  math.inf
+        raise ValueError("u in (0,1)")
+    a = [ -3.969683028665376e+01,  2.209460984245205e+02, -2.759285104469687e+02,
+           1.383577518672690e+02, -3.066479806614716e+01,  2.506628277459239e+00 ]
+    b = [ -5.447609879822406e+01,  1.615858368580409e+02, -1.556989798598866e+02,
+           6.680131188771972e+01, -1.328068155288572e+01 ]
+    c = [ -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+          -2.549732539343734e+00,  4.374664141464968e+00,  2.938163982698783e+00 ]
+    d = [  7.784695709041462e-03,  3.224671290700398e-01,  2.445134137142996e+00,
+           3.754408661907416e+00 ]
+    plow  = 0.02425
+    phigh = 1 - plow
+    if u < plow:
+        q = math.sqrt(-2*math.log(u))
+        num = (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])
+        den = ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+        x = num/den
+    elif u <= phigh:
+        q = u - 0.5
+        r = q*q
+        num = (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5]) * q
+        den = (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
+        x = num/den
+    else:
+        q = math.sqrt(-2*math.log(1-u))
+        num = (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])
+        den = ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+        x = -num/den
+    return x
+■14■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+sg.Text(
+    "これは赤い文字",
+    text_color="red",             # 文字色
+    background_color="black",     # 背景色（省略可）
+    font=("Meiryo", 10, "bold"),  # 太字なども指定可
+    key="-ALERT-TEXT-"
+)
+■15■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+window["-ALERT-TEXT-"].update("OK！", text_color="green")
+window["-ALERT-TEXT-"].update("NG...", text_color="red")
+■16■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+sg.Text(
+    "本ソフトウェアおよびその派生物の二次配布を禁止します。",
+    text_color="#FF4444",          # 鮮やか赤
+    background_color="#1E1E1E",    # ダークグレー背景
+    font=("Meiryo", 9, "bold"),
+    justification="center"
+),
+sg.Text(
+    "Copyright (C) 2025 ご主人様  All Rights Reserved.",
+    text_color="#AAAAAA",
+    background_color="#1E1E1E",
+    font=("Meiryo", 8),
+    justification="center"
+)
+■17■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    icon='icon.ico',
+    ...
+)
+■18■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+from PIL import Image
+img = Image.open("icon.png")
+img.save("icon.ico", sizes=[(256,256), (128,128), (64,64), (32,32), (16,16)])
+■19■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+from PIL import Image
+img = Image.open("icon.png")
+img.save("icon.ico", sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
+■20■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+sg.Text(
+    "For AAA division use only. Redistribution prohibited.",
+    text_color="#FF4444",
+    background_color="#1E1E1E",
+    font=("Meiryo", 8, "bold"),
+    justification="center"
+)
+■21■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def _build_texts():
+    base = {
+        # ...（中略：日本語定義）
+    }
+
+    # 英語版（必要な項目だけ翻訳してOK。残りは fallback）
+    base_en = base.copy()
+    base_en.update({
+        "TITLE": f"Defect Rate Threshold Tool (Outlier + ML assist) ver{APP_VERSION}",
+        "INPUT_LABEL": "Defect rate data: Manual input or CSV (select columns)",
+        "CSV_BTN": "Select CSV",
+        "CSV_READ": "Read columns",
+        "RUN": "Run",
+        "CLEAR": "Clear",
+        "LANG_JA": "Japanese",
+        "LANG_ZH": "Chinese (content in Japanese)",
+        "LANG_EN": "English",
+        "BATCH_HDR": "Batch processing (using selected CSV columns)",
+        "BATCH_RUN": "Run batch (then select save path)",
+        "BATCH_DONE": "Batch done: {rows} items processed (choose where to save)",
+        "BATCH_ERR": "Batch error: ",
+        "BATCH_EMPTY": "No valid rows",
+        "COPY_THR": "Copy threshold",
+        "COPY_REQ": "Copy required threshold",
+        "COPY_ORIG": "Copy original threshold",
+        "COPIED": "Copied",
+        # …必要に応じて他も翻訳
+    })
+
+    return {"ja": base.copy(), "zh": base.copy(), "en": base_en}
+■22■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+[sg.Button(t["LANG_JA"], key="-LANG-JA-"),
+ sg.Button(t["LANG_ZH"], key="-LANG-ZH-"),
+ sg.Button(t["LANG_EN"], key="-LANG-EN-")]
+■23■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+elif ev == "-LANG-EN-":
+    lang = "en"
+    set_language(window, lang)
+    redraw_from_active_tab()
+■24■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 import os, sys, matplotlib
 from matplotlib import font_manager
 
@@ -1661,7 +1900,35 @@ matplotlib.rcParams["axes.unicode_minus"] = False  # マイナス記号が□に
 # 保存時の埋め込み（PDF/SVGの文字化け回避）
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["svg.fonttype"] = "none"
-■8■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■25■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+MEI = getattr(sys, "_MEIPASS", None)
+if MEI:
+    FONT_CANDIDATES.insert(0, os.path.join(MEI, "fonts", "NotoSansCJKjp-Regular.otf"))
+■26■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+matplotlib.rcParams["font.family"] = "Meiryo"
+■27■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+MEI = getattr(sys, "_MEIPASS", None)
+if MEI:
+    FONT_CANDIDATES.insert(0, os.path.join(MEI, "fonts", "NotoSansCJKjp-Regular.otf"))
+■28■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+import os, sys, matplotlib
+from matplotlib.font_manager import FontProperties
+
+MEI = getattr(sys, "_MEIPASS", None)
+FONT_CANDIDATES = []
+if MEI:
+    FONT_CANDIDATES.append(os.path.join(MEI, "fonts", "NotoSansCJKjp-Regular.otf"))
+FONT_CANDIDATES.append(os.path.join(os.path.dirname(__file__), "fonts", "NotoSansCJKjp-Regular.otf"))
+
+font_path = next((p for p in FONT_CANDIDATES if os.path.exists(p)), None)
+if font_path:
+    fp = FontProperties(fname=font_path)
+    matplotlib.rcParams["font.family"] = fp.get_name()  # ← ファイルから名前解決
+# （fallback は OS 既定フォント）
+■29■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+print("[Font] resolved:", font_path or "(system default)")
+print("[MEIPASS]:", MEI)
+■30■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 import os, sys, matplotlib
 from matplotlib import font_manager
 
@@ -1703,7 +1970,29 @@ _set_jp_font()
 matplotlib.rcParams["axes.unicode_minus"] = False  # マイナス記号が□になる対策
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["svg.fonttype"] = "none"
-■9■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■31■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+from matplotlib import font_manager
+for f in font_manager.fontManager.ttflist:
+    if "Noto" in f.name or "Meiryo" in f.name:
+        print(f.name, "→", f.fname)
+■32■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+UI_FONT_FAMILY = "Noto Sans JP"
+sg.set_options(font=(UI_FONT_FAMILY, 10))
+■33■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+from tkinter import font as tkfont
+import tkinter as tk
+
+root = tk.Tk()
+try:
+    noto_path = os.path.join(MEI or os.path.dirname(__file__), "fonts", "NotoSansCJKjp-Regular.otf")
+    tkfont.nametofont("TkDefaultFont").configure(family="Noto Sans JP")
+except Exception as e:
+    print(f"[Font UI] Fallback: {e}")
+root.destroy()
+■34■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+UI_FONT_FAMILY = "Meiryo UI"   # UIは安定性優先
+GRAPH_FONT_FAMILY = "Noto Sans CJK JP"  # グラフは国際対応
+■35■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 import os, sys, matplotlib
 from matplotlib import font_manager
 
@@ -1729,7 +2018,25 @@ _set_jp_font()
 matplotlib.rcParams["axes.unicode_minus"] = False
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["svg.fonttype"] = "none"
-■10■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■36■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+font_manager.fontManager.addfont("fonts/NotoSansCJKjp-Regular.otf")
+■37■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+import os, sys, matplotlib
+from matplotlib import font_manager
+
+MEI = getattr(sys, "_MEIPASS", None)
+FONT_CANDIDATES = []
+if MEI:
+    FONT_CANDIDATES.append(os.path.join(MEI, "fonts", "NotoSansCJKjp-Regular.otf"))
+else:
+    FONT_CANDIDATES.append(os.path.join(os.path.dirname(__file__), "fonts", "NotoSansCJKjp-Regular.otf"))
+
+for p in FONT_CANDIDATES:
+    if os.path.exists(p):
+        font_manager.fontManager.addfont(p)
+        matplotlib.rcParams["font.family"] = font_manager.FontProperties(fname=p).get_name()
+        break
+■38■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 import os, sys, matplotlib
 from matplotlib import font_manager
 
@@ -1792,7 +2099,11 @@ matplotlib.rcParams["svg.fonttype"] = "none"
 
 # PySimpleGUI UI用フォント指定
 UI_FONT_FAMILY = SELECTED_FONT
-■11■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■39■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+sg.set_options(font=(UI_FONT_FAMILY, 9))
+■40■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+print("[UI_FONT]", UI_FONT_FAMILY)
+■41■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 import os, sys, matplotlib
 from matplotlib import font_manager
 
@@ -1869,7 +2180,85 @@ matplotlib.rcParams["svg.fonttype"] = "none"
 
 # PySimpleGUI 用
 UI_FONT_FAMILY = SELECTED_FONT
-■12■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■42■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+global CURRENT_LANG, UI_FONT_FAMILY
+CURRENT_LANG = lang
+UI_FONT_FAMILY = select_font_for_lang(lang)   # matplotlib 側もここで切替済み
+■43■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+# --- 言語切替の最後に追加 ---
+global CURRENT_LANG, UI_FONT_FAMILY
+CURRENT_LANG = lang
+UI_FONT_FAMILY = select_font_for_lang(lang)  # matplotlib 側のフォントfamilyもここで更新
+■44■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def _apply_ui_font(window, family, size=9):
+    # フォントを更新したいキー群（必要なら足して）
+    keys_to_update = [
+        "-PLOT-HDR-","-TAB-QQ-TITLE-","-TAB-HIST-TITLE-","-TAB-CDF-TITLE-",
+        "-LBL-INPUT-","-CSVBTN-","-READCSV-","-LBL-RATE-COL-","-LBL-KEY-COL-",
+        "-LBL-PERC-","-LBL-ALPHA-","-RUN-","-CLEAR-","-LANG-JA-","-LANG-ZH-",
+        "-MODE-HDR-","-MODE-NONE-","-MODE-SEQ-","-MODE-ML-","-MODE-ML-THR-LBL-",
+        "-SHOW-ML-PTS-","-LBL-STD-","-STD-S-","-STD-P-","-LBL-MAXREM-",
+        "-COLOR-HDR-","-COLOR-LEGEND-LBL-","-COLOR-CLEAN-LBL-","-COLOR-ORIG-LBL-",
+        "-COLOR-MINREJ-LBL-","-COLOR-PTS-ORIG-LBL-","-COLOR-PTS-REM-LBL-",
+        "-COLOR-PTS-CLEAN-LBL-","-COLOR-FIT-LBL-","-COLOR-FIT-ORIG-LBL-","-COLOR-ML-LBL-",
+        "-BATCH-HDR-","-BATCH-RUN-",
+        "-LBL-JUDG-","-LBL-SUMMARY-","-LBL-W-","-LBL-P-","-LBL-THR-","-NOTICE-",
+        "-OUTLIER-HDR-","-LBL-REMCOUNT-","-LBL-REMSTOP-","-LBL-REMVALUES-",
+        "-LBL-ORIGTHR-","-LBL-MISSED-","-LBL-REQTHR-","-LBL-REQTAIL-",
+        "-COPY-THR-","-COPY-REQ-","-COPY-ORIG-",
+        "-ML-HDR-","-ML-TRAIN-LBL-","-ML-TRAIN-BROWSE-","-ML-TRAIN-RUN-",
+        "-ML-MODEL-LBL-","-ML-BROWSE-","-ML-LOAD-","-ML-SCORE-","-ML-SAVE-",
+    ]
+    for k in keys_to_update:
+        if k in window.AllKeysDict:
+            try:
+                window[k].update(font=(family, size))
+            except Exception:
+                pass
+■45■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+_apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
+■46■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+redraw_from_active_tab()  # すでに持ってる関数でOK
+■47■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def set_language(window, lang):
+    # 各テキストを言語別辞書から更新
+    for key in TEXTS[lang]:
+        if key in window.AllKeysDict:
+            try:
+                window[key].update(TEXTS[lang][key])
+            except Exception:
+                pass
+
+    # 状態変数も更新
+    state["lang"] = lang
+■48■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+    # --- 言語切り替え後のフォント処理を追加 ---
+    global CURRENT_LANG, UI_FONT_FAMILY
+    CURRENT_LANG = lang
+    UI_FONT_FAMILY = select_font_for_lang(lang)  # matplotlib 側フォント設定も更新
+    _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
+    redraw_from_active_tab()  # 再描画してグラフも更新
+■49■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def set_language(window, lang):
+    # 各テキストを言語別辞書から更新
+    for key in TEXTS[lang]:
+        if key in window.AllKeysDict:
+            try:
+                window[key].update(TEXTS[lang][key])
+            except Exception:
+                pass
+
+    # 状態変数を更新
+    state["lang"] = lang
+
+    # ===== ここから追加部分 =====
+    global CURRENT_LANG, UI_FONT_FAMILY
+    CURRENT_LANG = lang
+    UI_FONT_FAMILY = select_font_for_lang(lang)   # 言語ごとにフォント切替
+    _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)  # 主要UIのフォント更新
+    redraw_from_active_tab()  # グラフ再描画
+    # ===== ここまで =====
+■50■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 # ======================================================
 # フォント再設定関数
 # ======================================================
@@ -1914,8 +2303,184 @@ def set_language(window, lang):
     UI_FONT_FAMILY = select_font_for_lang(lang)
     _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
     redraw_from_active_tab()
-■13■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■51■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def redraw_from_active_tab():
+    active_tab = state["active_tab"]
+    # ここで window を使ってる（例：window["-CANVAS-"].Widget など）
+■52■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+# --- グローバル変数を先に宣言 ---
+state = {}
+current_thr_values = {}
+UI_FONT_FAMILY = "Meiryo"
+UI_FONT_SIZE = 10
+CURRENT_LANG = "ja"
 
+def redraw_from_active_tab(window):
+    global state, current_thr_values
+    ...
+
+def set_language(window, lang):
+    global CURRENT_LANG, UI_FONT_FAMILY
+    CURRENT_LANG = lang
+    UI_FONT_FAMILY = select_font_for_lang(lang)
+    _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
+    redraw_from_active_tab(window)
+
+def main():
+    global window
+    ...
+■53■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def main():
+    window = sg.Window("App", layout, finalize=True)
+    state = {}
+    current_thr_values = {}
+
+    def redraw_from_active_tab():
+        nonlocal state, current_thr_values
+        ...
+
+    def set_language(lang):
+        nonlocal UI_FONT_FAMILY, CURRENT_LANG
+        CURRENT_LANG = lang
+        UI_FONT_FAMILY = select_font_for_lang(lang)
+        _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
+        redraw_from_active_tab()
+
+    while True:
+        event, values = window.read()
+        if event == "-LANG-JA-":
+            set_language("ja")
+        elif event == "-LANG-ZH-":
+            set_language("zh")
+■54■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+# =====================================================
+# 外部：どのスコープでも使える共通関数
+# =====================================================
+
+def _apply_ui_font(window, family, size=9):
+    """UIフォントを再適用する"""
+    for key, element in window.AllKeysDict.items():
+        try:
+            element.update(font=(family, size))
+        except Exception:
+            pass
+
+
+# =====================================================
+# メイン関数内：GUI と依存関数を閉じ込める
+# =====================================================
+
+def main():
+    # --- GUI初期化 ---
+    window = sg.Window("不良率ツール", layout, finalize=True)
+    state = {}
+    current_thr_values = {}
+
+    # =====================================================
+    # 内部関数：再描画
+    # =====================================================
+    def redraw_from_active_tab():
+        """アクティブタブの再描画"""
+        nonlocal window, state, current_thr_values
+        # ここで state や current_thr_values を参照・更新して描画処理を行う
+        # ...
+        pass
+
+    # =====================================================
+    # 内部関数：言語切替
+    # =====================================================
+    def set_language(lang):
+        """言語を切り替える"""
+        nonlocal window, state, current_thr_values, UI_FONT_FAMILY, CURRENT_LANG
+        CURRENT_LANG = lang
+        UI_FONT_FAMILY = select_font_for_lang(lang)
+        _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
+        redraw_from_active_tab()
+
+    # =====================================================
+    # イベントループ
+    # =====================================================
+    while True:
+        event, values = window.read()
+        if event in (sg.WIN_CLOSED, "Exit"):
+            break
+        elif event == "-LANG-JA-":
+            set_language("ja")
+        elif event == "-LANG-ZH-":
+            set_language("zh")
+        elif event == "-RUN-":
+            # 計算実行など
+            pass
+
+    window.close()
+■55■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def _apply_ui_font(window, family, size=9):
+    ...
+
+def main():
+    window = sg.Window("...", layout, finalize=True)
+    state = {}
+    current_thr_values = {}
+
+    def redraw_from_active_tab():
+        nonlocal window, state, current_thr_values
+        ...
+
+    def set_language(lang):
+        nonlocal window, state, current_thr_values
+        _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
+        redraw_from_active_tab()
+
+    while True:
+        ...
+■56■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+# 外：汎用だけ
+def _apply_ui_font(window, family, size=9):
+    for _, el in window.AllKeysDict.items():
+        try: el.update(font=(family, size))
+        except: pass
+
+def main():
+    # ---- 1) GUIを先に作る ----
+    window = sg.Window("...", layout, finalize=True, resizable=True)
+    state = {}  # 共有状態なんでもここ
+
+    # ---- 2) window/stateに依存する関数は中に閉じる ----
+    def redraw_from_active_tab():
+        nonlocal window, state
+        # ... グラフ再描画 ...
+
+    def set_language(lang):
+        nonlocal window, state
+        # TEXTS切替
+        t = TEXTS[lang]
+        window.TKroot.title(t["TITLE"])
+        # ラベル反映
+        # window["-LBL-...-"].update(t["..."])
+        # UIフォント適用
+        _apply_ui_font(window, UI_FONT_FAMILY, UI_FONT_SIZE)
+        # 再描画
+        redraw_from_active_tab()
+
+    def run_once(values):
+        nonlocal window, state
+        # ... 計算 → state 更新 ...
+        redraw_from_active_tab()
+
+    # ---- 3) 初期化してからイベントループ ----
+    set_language("ja")  # or "zh"
+    while True:
+        ev, vals = window.read()
+        if ev in (sg.WIN_CLOSED, "Exit"): break
+        elif ev == "-RUN-": run_once(vals)
+        elif ev == "-LANG-JA-": set_language("ja")
+        elif ev == "-LANG-ZH-": set_language("zh")
+        elif ev == "-TABGRP-": redraw_from_active_tab()
+    window.close()
+
+if __name__ == "__main__":
+    main()
+■57■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 def _build_texts():
     base_ja = {
         # ...（ここは既存のまま）...
@@ -2025,27 +2590,7 @@ def _build_texts():
     }
 
     return {"ja": base_ja, "zh": base_zh}
-
-■14■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
-def _build_texts():
-    base_ja = {
-        "TITLE": f"不良率 上位%しきい値ツール（外れ値対応＋ML補助） ver{APP_VERSION}",
-        "INPUT_LABEL": "不良率データ：手入力 or CSV読込（列を選んで使う）",
-        "RUN": "計算",
-        "CLEAR": "クリア",
-        # ...
-    }
-
-    base_zh = {
-        "TITLE": f"不良率 上位%阈值工具（含异常值处理＋机器学习辅助） ver{APP_VERSION}",
-        "INPUT_LABEL": "不良率数据：手动输入或读取CSV（选择要使用的列）",
-        "RUN": "计算",
-        "CLEAR": "清除",
-        # ...
-    }
-
-    return {"ja": base_ja, "zh": base_zh}
-■15■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■58■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 # 品名ビューア関連
 "VIEW_SEARCH": "搜索",
 "VIEW_DECIDE": "确定",
@@ -2058,40 +2603,153 @@ def _build_texts():
 "VIEW_POINTS": "散点",
 "VIEW_FITLINE": "拟合线",
 "LICENSE_NOTICE": "禁止二次分发・仅限AAA部门内部使用",
-■16■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■59■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+base_zh_cn.update({
+    "VIEW_SEARCH": "搜索",
+    "VIEW_DECIDE": "确定",
+    "VIEW_CANCEL": "取消",
+    "VIEW_NO_MATCH": "无对应项目",
+    "VIEW_BATCH": "批量处理",
+    "VIEW_CONFIG": "设置",
+    "VIEW_NORMALITY": "正态性结果",
+    "VIEW_THRESH": "阈值线",
+    "VIEW_POINTS": "散点",
+    "VIEW_FITLINE": "拟合线",
+    "LICENSE_NOTICE": "禁止二次分发・仅限AAA部门内部使用",
+})
+■60■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 "VIEW_TITLE": "品名视图",
 "VIEW_SHOW": "显示",
 "VIEW_SELECT_FROM_LIST": "从列表中选择",
 "VIEW_SELECT_ITEM": "请选择品名",
 "VIEW_NO_BATCH_RESULT": "没有批量处理结果",
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■61■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+base_zh_cn.update({
+    "VIEW_TITLE": "品名视图",
+    "VIEW_SHOW": "显示",
+    "VIEW_SELECT_FROM_LIST": "从列表中选择",
+    "VIEW_SELECT_ITEM": "请选择品名",
+    "VIEW_NO_BATCH_RESULT": "没有批量处理结果",
+})
+■62■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+def set_language(window, lang):
+    t = TEXTS[lang]
+    window.TKroot.title(t["TITLE"])
 
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+    mapping = [
+        ("-FRAME-RESULT-",    "FRAME_RESULT_HDR"),
+        ("-FRAME-BATCH-",     "BATCH_HDR"),
+        ("-FRAME-SETTINGS-",  "FRAME_SETTINGS_HDR"),
+        ("-LBL-PERC-",        "PERC"),
+        ("-RUN-",             "RUN"),
+        ("-CLEAR-",           "CLEAR"),
+        ("-LBL-JUDG-",        "JUDG"),
+        ("-LBL-SUMMARY-",     "SUMMARY"),
+        # …あなたが“手動で追加した全部”をここに列挙…
+    ]
+    for key, text_key in mapping:
+        if key in window.AllKeysDict:
+            window[key].update(t[text_key])
 
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+    # タブタイトルは title= を使う
+    if "-TAB-QQ-" in window.AllKeysDict:
+        window["-TAB-QQ-"].update(title=t["TAB_QQ"])
+    if "-TAB-HIST-" in window.AllKeysDict:
+        window["-TAB-HIST-"].update(title=t["TAB_HIST"])
+    if "-TAB-CDF-" in window.AllKeysDict:
+        window["-TAB-CDF-"].update(title=t["TAB_CDF"])
+■63■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+TEXTS["ja"].update({
+    "FRAME_RESULT_HDR": "正規性結果",
+    "FRAME_SETTINGS_HDR": "設定",
+    "BATCH_HDR": "一括処理",
+    "BTN_RUN": "計算",
+    "BTN_CLEAR": "クリア",
+})
+■64■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+frame_result = sg.Frame(
+    t["FRAME_RESULT_HDR"],
+    [[sg.Text(t["SUMMARY"], key="-LBL-SUMMARY-")]],
+    key="-FRAME-RESULT-"
+)
 
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+btn_row = [
+    sg.Button(t["BTN_RUN"], key="-BTN-RUN-"),
+    sg.Button(t["BTN_CLEAR"], key="-BTN-CLEAR-")
+]
+■65■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+mapping = [
+    ("-FRAME-RESULT-", "FRAME_RESULT_HDR"),
+    ("-FRAME-SETTINGS-", "FRAME_SETTINGS_HDR"),
+    ("-BATCH-", "BATCH_HDR"),
+    ("-BTN-RUN-", "BTN_RUN"),
+    ("-BTN-CLEAR-", "BTN_CLEAR"),
+]
+for key, text_key in mapping:
+    if key in window.AllKeysDict:
+        window[key].update(t[text_key])
+■66■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■67■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■68■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■69■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
-
-■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■70■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
 
 
+ver liteまで
 
 
+■47■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
+■48■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
+■49■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
+■50■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
+■51■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
+■52■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
+■53■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■54■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■55■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■56■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■57■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■58■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■59■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■60■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■61■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■62■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■63■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■64■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■65■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■66■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■67■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■68■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■69■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+■70■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
 
 
