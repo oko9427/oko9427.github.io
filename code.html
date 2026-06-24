@@ -14,6 +14,1715 @@
 <pre><code>
 ここにプログラムコードを書く
 
+■0■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+# -*- coding: utf-8 -*-
+"""
+不良率 上位%しきい値ツール ver0.20
+- 右側キャンバス直下に「品名ビューア」追加：一括処理後に品名ごとにグラフを巡回表示
+- 図コピー/保存：print_to_buffer()優先（buffer_rgba フォールバック）でキャンバスを壊さない方式
+- i18n: 新規UI/メッセージをTEXTSに追加（今はja/zhとも日本語）
+- それ以外はver0.19gの仕様を踏襲
+"""
+
+import sys, os, math, pickle, datetime, re, tempfile
+import numpy as np
+import pandas as pd
+import PySimpleGUI as sg
+from scipy import stats
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+APP_VERSION = "0.20"
+
+# ===== UIベース設定 =============================================================
+
+from matplotlib import font_manager
+
+# ---- 言語別のフォント候補（上から優先） ----
+LANG_FONT_CANDIDATES = {
+    "ja": [
+        r"C:\Windows\Fonts\meiryo.ttc",
+        r"C:\Windows\Fonts\YuGothM.ttc",
+        r"C:\Windows\Fonts\msgothic.ttc",
+        r"C:\Windows\Fonts\NotoSansJP-VF.ttf",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",   # Linux 汎用
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf",
+    ],
+    # ここでは簡体字(zh-cn)を想定。繁体字なら NotoSansCJKtc や PingFang TC を追加して
+    "zh-cn": [
+        r"C:\Windows\Fonts\msyh.ttc",          # Microsoft YaHei (簡体)
+        r"C:\Windows\Fonts\msyhbd.ttc",
+        r"C:\Windows\Fonts\simsun.ttc",        # SimSun
+        "/System/Library/Fonts/PingFang.ttc",  # macOS (SC/TC含む)
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ],
+}
+
+# ---- PyInstaller 同梱フォント（最終手段） ----
+MEI = getattr(sys, "_MEIPASS", None)
+def _bundled_font_path(filename):
+    if MEI:
+        return os.path.join(MEI, "fonts", filename)
+    return os.path.join(os.path.dirname(__file__), "fonts", filename)
+
+# ja: NotoSansCJKjp, zh-cn: NotoSansCJKsc を最後に差し込む
+LANG_BUNDLED_FALLBACK = {
+    "ja": _bundled_font_path("NotoSansJP-VF.ttf"),
+    "zh": _bundled_font_path("NotoSansCJKsc-Regular.otf"),
+}
+
+def select_font_for_lang(lang: str) -> str:
+    """
+    言語(lang)に応じて候補フォントを探索して設定。
+    見つかったフォント名を返す（見つからなければ 'sans-serif'）。
+    """
+    candidates = list(LANG_FONT_CANDIDATES.get(lang, []))
+    bundled = LANG_BUNDLED_FALLBACK.get(lang)
+    if bundled:
+        # 同梱フォントは最後の“最終手段”として追加
+        candidates.append(bundled)
+
+    for p in candidates:
+        if p and os.path.exists(p):
+            try:
+                font_manager.fontManager.addfont(p)
+                name = font_manager.FontProperties(fname=p).get_name()
+                matplotlib.rcParams["font.family"] = name
+                print(f"[Font] {lang} -> {name} ({p})")
+                return name
+            except Exception:
+                continue
+
+    print(f"[Font] {lang} 用フォント未発見。デフォルト使用。")
+    return "sans-serif"
+
+# 初期言語に合わせて一度セット（例：ja / zh）
+CURRENT_LANG = "ja"  # ← 起動時の既定を合わせて
+SELECTED_FONT = select_font_for_lang(CURRENT_LANG)
+
+# matplotlib 共通設定
+matplotlib.rcParams["axes.unicode_minus"] = False
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["svg.fonttype"] = "none"
+
+# PySimpleGUI 用
+UI_FONT_FAMILY = SELECTED_FONT
+UI_FONT_SIZE   = 8
+sg.set_options(font=(UI_FONT_FAMILY, UI_FONT_SIZE))
+
+# 図サイズ/フォント（固定。GUIからは変更しない）
+FIG_WIDTH_IN  = 5.6   # 560px @100dpi
+FIG_HEIGHT_IN = 4.0   # 400px
+FIG_DPI       = 100
+MPL_FONT_SIZE = 7
+matplotlib.rcParams.update({
+    'figure.dpi': FIG_DPI,
+    'font.size': MPL_FONT_SIZE,
+    'axes.titlesize': MPL_FONT_SIZE,
+    'axes.labelsize': MPL_FONT_SIZE,
+    'xtick.labelsize': MPL_FONT_SIZE,
+    'ytick.labelsize': MPL_FONT_SIZE,
+    'legend.fontsize': MPL_FONT_SIZE,
+})
+
+# その他定数
+PREVIEW_MAX      = 500
+DEFAULT_MAX_REMOVE_FRAC  = 0.50
+STD_MODE         = "sample"  # "sample"=STDEV.S, "population"=STDEV.P
+RANDOM_STATE     = 42
+EPS              = 1e-9
+
+# ===== DPI awareness（Windows） =================================================
+def enable_dpi_awareness():
+    """Windowsで高DPI環境でもボケないように。失敗しても無視でOK。"""
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+enable_dpi_awareness()
+
+# ====== i18n（日本語/中文キー。中身は当面どちらも日本語） =========================
+TEXTS = {
+    "ja": = {
+        # タイトル
+        "TITLE": f"不良率 上位%しきい値ツール（外れ値対応＋ML補助） ver{APP_VERSION}",
+        # 入力
+        "INPUT_LABEL": "不良率データ：手入力 or CSV読込（列を選んで使う）",
+        "CSV_BTN": "CSV選択", "CSV_READ": "列名読込",
+        "CSV_RATE_COL": "不良率の列", "CSV_KEY_COL": "キーの列（品名など）",
+        "PERC": "上位%（例:5）", "ALPHA": "正規性α",
+        "RUN": "計算", "CLEAR": "クリア",
+        "LANG_JA": "日本語", "LANG_ZH": "中文",
+        # 外れ値モード
+        "MODE_HDR": "外れ値の扱い（どれか1つ）",
+        "MODE_NONE": "除外しない",
+        "MODE_SEQ":  "逐次除外（最大上限まで）",
+        "MODE_ML":   "MLで除外（p≥閾値）",
+        "MODE_ML_THR": "ML閾値(0〜1)",
+        "SHOW_ML_PTS": "AI外れ点をQQに描画（△）",
+        # σの定義/逐次除外上限
+        "STD_MODE": "σの定義", "STD_SAMPLE": "標本（STDEV.S）", "STD_POP": "母集団（STDEV.P）",
+        "MAX_REMOVE": "逐次除外の上限（割合）",
+        # 0%込み補正
+        "INCL_ZERO_PCT": "0%ロット込みで全体p%達成（Excel互換A）",
+        "EFFPCT": "不良>0に対する上位%（A）:",
+        # プロット/タブ
+        "PLOT_HDR": "プロット",
+        "TAB_QQ": "QQ", "TAB_HIST": "Hist", "TAB_CDF": "CDF",
+        "PLOT_LABEL_ORIGINAL": "Original", "PLOT_LABEL_REMOVED": "Removed",
+        "PLOT_LABEL_CLEANED": "Cleaned", "PLOT_LABEL_FIT": "Fit (Cleaned)",
+        "PLOT_LABEL_FIT_ORIG": "Fit (Original)",
+        "PLOT_LABEL_THR_CLEANED": "Threshold (cleaned)",
+        "PLOT_LABEL_THR_ORIG": "Threshold (original)",
+        "PLOT_LABEL_THR_MINREJ": "Min threshold to reject outliers",
+        "PLOT_LABEL_ML_FLAG": "AI-flagged",
+        "PLOT_XLABEL": "Theoretical Quantiles (Normal)",
+        "PLOT_YLABEL": "Sample Quantiles (log(defect rate))",
+        "PLOT_TITLE_BASE": "QQ Plot of log(defect rate)",
+        "PLOT_TITLE_NO_DATA": "QQ Plot of log(defect rate) - no data",
+        "PLOT_TITLE_HIST": "Histogram of log(defect rate)",
+        "PLOT_TITLE_CDF": "CDF of log(defect rate)",
+        "HIST_NO_DATA": "Histogram - no data",
+        "CDF_NO_DATA": "CDF - no data",
+        # 色設定
+        "COLOR_HDR": "色の設定（C0..C9）",
+        "COLOR_LEGEND": "色見本：",
+        "COLOR_CLEAN": "Cleaned",
+        "COLOR_ORIG": "Original",
+        "COLOR_MINREJ": "MinReject",
+        "COLOR_ORIG_PTS": "Original",
+        "COLOR_REM_PTS":  "Removed",
+        "COLOR_CLEAN_PTS":"Cleaned",
+        "COLOR_FIT_LINE": "Cleaned",
+        "COLOR_FIT_LINE_ORIG": "Original",
+        "COLOR_ML_FLAG":  "AI Removed",
+        "COLOR_CODE_FMT": "{label} ({code})",
+        # 結果
+        "JUDG": "判定:", "SUMMARY": "サマリ:", "W": "W:", "P": "p値:",
+        "THRESH": "除外後しきい値:",
+        "NOTICE_ZERO": "（注意）0のロットは log不可のため分布推定から除外",
+        "OK": "OK", "NG": "NG",
+        # 外れ値詳細
+        "OUTLIER_HDR": "外れ値処理サマリ",
+        "REMCOUNT": "除去数:", "REMSTOP": "停止理由:", "REMVALUES": "除去上位（10件）:",
+        "ORIGTHR": "元データしきい値:", "MISSED": "元しきいで弾けなかった外れ数:",
+        "REQTHR": "外れを必ず弾く最小しきい値:", "REQTAIL": "その上位%（元分布基準）:",
+        # コピー/CSV/画像
+        "COPY_THR": "しきい値コピー", "COPY_REQ": "最小しきい値コピー", "COPY_ORIG": "元しきい値コピー",
+        "COPY_PLOT": "図をコピー/保存",  # ← ボタンはコメントアウトで非表示
+        "COPIED": "コピーしたよ",
+        "POP_CSV_SEL": "CSVを選んで", "POP_CSV_ERR": "CSV読込失敗: ",
+        "NOTE_A100": "Aが100%以上：不良>0を全弾きにしないと全体p%を満たせない",
+        "DIALOG_SAVE_CSV": "出力CSVの保存先",
+        "DIALOG_SAVE_PNG": "PNG保存",
+        "MSG_NO_VALUE": "値がないよ",
+        # 一括処理
+        "BATCH_HDR": "一括処理（選択したCSVの列指定を使用）",
+        "BATCH_RUN": "一括処理を実行（処理後に保存先を指定）",
+        "BATCH_DONE": "一括処理 完了：{rows}件（保存先を選んでね）",
+        "BATCH_ERR": "一括処理エラー: ", "BATCH_EMPTY": "有効行が無かった",
+        "ERR_SELECT_COLUMNS": "列を選択して",
+        # ML 学習
+        "ML_HDR": "ML学習（A=Name, B=Rate, C=IsOutlier）",
+        "ML_TRAIN_CSV": "学習CSV", "ML_TRAIN_BROWSE": "選択", "ML_TRAIN_RUN": "学習実行",
+        "ML_SAVE": "モデル保存", "ML_LOAD": "モデル読込",
+        "ML_MODEL": "モデル(.pkl)", "ML_BROWSE": "選択", "ML_SCORE": "現在データをML判定",
+        "ML_INFO_READY": "モデルOK", "ML_INFO_FAIL": "失敗: ", "ML_INFO_NODATA": "データなし",
+        "ML_INFO_RESULT": "外れ候補: {n}件（p≥{thr:.2f}）",
+        "ERR_NO_MODEL": "モデルがない（先に学習 or 読込して）",
+        "ERR_TRAIN_COLS": "学習CSVは少なくとも3列（A=Name,B=Rate,C=IsOutlier）が必要",
+        # compute メッセージ
+        "MSG_TOO_FEW_LOTS": "ロット数が少なすぎ（{n_total}≤10）",
+        "MSG_TOO_FEW_POS": "不良発生ロットが少なすぎ（{n_pos}<3）",
+        "MSG_LOG_DATA_SHORT": "対数化に使えるデータが足りない（>0が3未満）",
+        "MSG_SHAPIRO_ERR_ORIG": "正規性検定エラー（元）: {err}",
+        "MSG_SHAPIRO_ERR_SEQ":  "正規性検定エラー（逐次）: {err}",
+        "MSG_SHAPIRO_ERR_CLEAN":"正規性検定エラー（cleaned）: {err}",
+        "MSG_OK": "正規性OK（p={p:.4g} ≥ α={alpha}）",
+        "MSG_NG": "正規性NG（p={p:.4g} < α={alpha}）",
+        "MSG_P_NA": "p値が計算できなかった",
+        "MSG_MODE_NONE": "除外しない",
+        "MSG_MODE_SEQ_LIMIT": "上限到達",
+        "MSG_MODE_ML_NONE": "MLモデルなし→除外せず",
+        "MSG_MODE_ML_USED": "ML除外（p≥{thr}）",
+        # 品名ビューア（新規）
+        "BVIEW_BAR_HDR": "品名ビュー",
+        "BVIEW_NOW": "表示:",
+        "BVIEW_PICK": "一覧から選ぶ",
+        "BVIEW_PICK_PROMPT": "品名を選んで",
+        "BVIEW_NO_BATCH": "一括処理の結果がない",
+        # 品名ビューア（追加）
+        "BVIEW_SEARCH": "検索",
+        "BVIEW_OK": "決定",
+        "BVIEW_CANCEL": "やめる",
+        "BVIEW_NO_MATCH": "該当なし",
+        # 手動追加分
+        "FRAME_BATCH_HDR": "一括処理",
+        "FRAME_SETTINGS_HDR": "設定",
+        "FRAME_RESULT_HDR": "正規性結果",
+        "COLOR_LINES_HDR": "しきい線",
+        "COLOR_POINTS_HDR": "打点",
+        "COLOR_FITLINE_HDR": "近似直線",
+        # 注意書き
+        "CAUTIONARY_NOTE": "二次配布禁止・UHV限定で使用可能",
+    },
+    "zh-cn": = {
+        # 标题与概要
+        "TITLE": f"不良率 上位%阈值工具（含异常值处理＋机器学习辅助） ver{APP_VERSION}",
+        # 入力
+        "INPUT_LABEL": "不良率数据：手动输入或读取CSV（选择要使用的列）",
+        "CSV_BTN": "选择CSV", "CSV_READ": "读取列名",
+        "CSV_RATE_COL": "不良率列", "CSV_KEY_COL": "键列（品名等）",
+        "PERC": "上位%（例:5）", "ALPHA": "正态性α",
+        "RUN": "计算", "CLEAR": "清除",
+        "LANG_JA": "japanese", "LANG_ZH": "中文",
+        # 外れ値モード
+        "MODE_HDR": "异常值处理模式（选择一个）",
+        "MODE_NONE": "不排除",
+        "MODE_SEQ": "顺序排除（直到达上限）",
+        "MODE_ML": "使用机器学习排除（p≥阈值）",
+        "MODE_ML_THR": "ML阈值(0〜1)",
+        "SHOW_ML_PTS": "在QQ图上显示AI异常点（△）",
+        # σの定義/逐次除外上限
+        "STD_MODE": "σ的定义", "STD_SAMPLE": "样本（STDEV.S）", "STD_POP": "总体（STDEV.P）",
+        "MAX_REMOVE": "顺序排除上限比例",
+        # 0%込み補正
+        "INCL_ZERO_PCT": "包含0%批次以达到整体p%（Excel兼容A）",
+        "EFFPCT": "相对于不良>0的上位%（A）:",
+        # プロット/タブ
+        "PLOT_HDR": "图表",
+        "TAB_QQ": "QQ图", "TAB_HIST": "直方图", "TAB_CDF": "累积分布",
+        "PLOT_LABEL_ORIGINAL": "原始数据", "PLOT_LABEL_REMOVED": "已排除", "PLOT_LABEL_CLEANED": "清洗后",
+        "PLOT_LABEL_FIT": "拟合线 (清洗后)", "PLOT_LABEL_FIT_ORIG": "拟合线 (原始)",
+        "PLOT_LABEL_THR_CLEANED": "阈值 (清洗后)",
+        "PLOT_LABEL_THR_ORIG": "阈值 (原始)",
+        "PLOT_LABEL_THR_MINREJ": "最小排除阈值",
+        "PLOT_LABEL_ML_FLAG": "AI标记点",
+        "PLOT_XLABEL": "理论分位数（正态）",
+        "PLOT_YLABEL": "样本分位数（log(不良率)）",
+        "PLOT_TITLE_BASE": "log(不良率)的QQ图",
+        "PLOT_TITLE_NO_DATA": "QQ图（无数据）",
+        "PLOT_TITLE_HIST": "log(不良率)的直方图",
+        "PLOT_TITLE_CDF": "log(不良率)的CDF",
+        "HIST_NO_DATA": "直方图 - 无数据",
+        "CDF_NO_DATA": "CDF - 无数据",
+        # 色設定
+        "COLOR_HDR": "颜色设置（C0..C9）",
+        "COLOR_LEGEND": "色例：",
+        "COLOR_CLEAN": "阈值线 Cleaned",
+        "COLOR_ORIG": "阈值线 Original",
+        "COLOR_MINREJ": "阈值线 MinReject",
+        "COLOR_ORIG_PTS": "散点 Original",
+        "COLOR_REM_PTS": "散点 Removed",
+        "COLOR_CLEAN_PTS": "散点 Cleaned",
+        "COLOR_FIT_LINE": "拟合线 (Cleaned)",
+        "COLOR_FIT_LINE_ORIG": "拟合线 (Original)",
+        "COLOR_ML_FLAG": "AI标记散点",
+        "COLOR_CODE_FMT": "{label} ({code})",
+        # 結果
+        "JUDG": "判定:", "SUMMARY": "摘要:", "W": "W:", "P": "p值:",
+        "THRESH": "阈值（原尺度, 上位%指定）:",
+        "NOTICE_ZERO": "（注意）0批次无法取log, 被排除在分布估计之外",
+        "OK": "OK", "NG": "NG",
+        # 外れ値詳細
+        "OUTLIER_HDR": "异常值处理摘要",
+        "REMCOUNT": "排除数:", "REMSTOP": "停止原因:", "REMVALUES": "排除上位（10件）:",
+        "ORIGTHR": "原始阈值:", "MISSED": "未被原始阈值排除的异常:",
+        "REQTHR": "确保排除异常的最小阈值:", "REQTAIL": "对应上位%（基于原始分布）:",
+        # コピー/CSV/画像
+        "COPY_THR": "复制阈值", "COPY_REQ": "复制最小阈值", "COPY_ORIG": "复制原始阈值",
+        "COPY_PLOT": "复制/保存图像", # ←ボタンはコメントアウトで非表示
+        "COPIED": "已复制",
+        "POP_CSV_SEL": "请选择CSV文件",
+        "POP_CSV_ERR": "CSV读取失败: ",
+        "NOTE_A100": "A≥100%：必须排除全部不良>0才能达到整体p%",
+        "DIALOG_SAVE_CSV": "选择输出CSV保存路径",
+        "DIALOG_SAVE_PNG": "保存PNG",
+        "MSG_NO_VALUE": "没有可复制的值",
+        # 一括処理
+        "BATCH_HDR": "批量处理（使用选定CSV的列设置）",
+        "BATCH_RUN": "执行批量处理（完成后选择保存位置）",
+        "BATCH_DONE": "批处理完成：{rows}条（请选择保存位置）",
+        "BATCH_ERR": "批处理错误: ", "BATCH_EMPTY": "无有效数据",
+        "ERR_SELECT_COLUMNS": "请选择列",
+        # ML学習
+        "ML_HDR": "机器学习训练（A=Name, B=Rate, C=IsOutlier）",
+        "ML_TRAIN_CSV": "训练CSV", "ML_TRAIN_BROWSE": "选择", "ML_TRAIN_RUN": "执行训练",
+        "ML_SAVE": "保存模型", "ML_LOAD": "读取模型",
+        "ML_MODEL": "模型(.pkl)", "ML_BROWSE": "选择", "ML_SCORE": "ML判定当前数据",
+        "ML_INFO_READY": "模型OK", "ML_INFO_FAIL": "失败: ", "ML_INFO_NODATA": "无数据",
+        "ML_INFO_RESULT": "异常候选: {n}件（p≥{thr:.2f}）",
+        "ERR_NO_MODEL": "无模型（请先训练或读取）",
+        "ERR_TRAIN_COLS": "训练CSV至少需3列（A=Name,B=Rate,C=IsOutlier）",
+        # compute メッセージ
+        "MSG_TOO_FEW_LOTS": "批次数过少（{n_total}≤10）",
+        "MSG_TOO_FEW_POS": "不良批次数过少（{n_pos}<3）",
+        "MSG_LOG_DATA_SHORT": "log可用数据不足（>0不足3个）",
+        "MSG_SHAPIRO_ERR_ORIG": "正态性检验错误（原始）: {err}",
+        "MSG_SHAPIRO_ERR_SEQ": "正态性检验错误（顺序）: {err}",
+        "MSG_SHAPIRO_ERR_CLEAN": "正态性检验错误（清洗）: {err}",
+        "MSG_OK": "正态性OK（p={p:.4g} ≥ α={alpha}）",
+        "MSG_NG": "正态性NG（p={p:.4g} < α={alpha}）",
+        "MSG_P_NA": "无法计算p值",
+        "MSG_MODE_NONE": "不排除异常值",
+        "MSG_MODE_SEQ_LIMIT": "已达上限",
+        "MSG_MODE_ML_NONE": "无ML模型→不排除",
+        "MSG_MODE_ML_USED": "已使用ML排除（p≥{thr}）",
+        # 品名ビューア（新規）
+        "BVIEW_BAR_HDR": "品名视图",
+        "BVIEW_NOW": "显示",
+        "BVIEW_PICK": "从列表中选择",
+        "BVIEW_PICK_PROMPT": "请选择品名",
+        "BVIEW_NO_BATCH": "没有批量处理结果",
+        # 品名ビューア（追加）
+        "VIEW_SEARCH": "搜索",
+        "VIEW_DECIDE": "确定",
+        "VIEW_CANCEL": "取消",
+        "VIEW_NO_MATCH": "无对应项目",
+        # 手動追加分
+        "VIEW_BATCH": "批量处理",
+        "VIEW_CONFIG": "设置",
+        "VIEW_NORMALITY": "正态性结果",
+        "VIEW_THRESH": "阈值线",
+        "VIEW_POINTS": "散点",
+        "VIEW_FITLINE": "拟合线",
+        # 注意書き
+        "LICENSE_NOTICE": "禁止二次分发・仅限UHV部门内部使用",
+    }
+}
+
+
+# ===== 色（C0..C9） =============================================================
+def _mpl_cycle_colors():
+    cyc = matplotlib.rcParams['axes.prop_cycle'].by_key().get('color', [])
+    if len(cyc) < 10:
+        import itertools
+        cyc = list(itertools.islice(itertools.cycle(cyc or ["#1f77b4"]), 10))
+    return cyc[:10]
+C_HEX = _mpl_cycle_colors()
+COLOR_CHOICES = [f"C{i}" for i in range(10)]
+
+def color_code_label(text_key_label, code):
+    """設定ラベルを「ラベル名 (C*)」表記に整える"""
+    label = TEXTS["ja"][text_key_label]
+    return TEXTS["ja"]["COLOR_CODE_FMT"].format(label=label, code=code)
+
+# ===== 入力ユーティリティ ========================================================
+def parse_text_numbers(text: str):
+    """テキストから数値トークンだけ抽出（正規表現ベースで堅牢）"""
+    if not text: return []
+    nums=[]
+    for s in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", text):
+        try: nums.append(float(s))
+        except: pass
+    return nums
+
+def read_csv_df(path: str):
+    """CSVを読む。区切りは自動推測も許容。"""
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return pd.read_csv(path, sep=None, engine="python")
+
+def detect_and_normalize_scale(arr):
+    """
+    0〜1 or 0〜100% のヒューリスティック判定。
+    - 25%以上が1超 or 95%点が1.2超 → %と判断し/100
+    """
+    a=np.asarray(arr,dtype=float)
+    if a.size==0: return a,"unknown"
+    over1_ratio = (a>1.0).mean()
+    p95 = np.nanpercentile(a, 95) if np.isfinite(a).any() else 0
+    if over1_ratio>=0.25 or p95>1.2:
+        return a/100.0, "percent"
+    return a, "proportion"
+
+def validate_counts(rates, texts):
+    """最低限のデータ量チェック"""
+    n_total=len(rates); n_pos=int(np.sum(np.asarray(rates)>0))
+    ok=True; reasons=[]
+    if n_total<=10:
+        ok=False; reasons.append(texts["MSG_TOO_FEW_LOTS"].format(n_total=n_total))
+    if n_pos<3:
+        ok=False; reasons.append(texts["MSG_TOO_FEW_POS"].format(n_pos=n_pos))
+    return ok, reasons, n_total, n_pos
+
+# ===== 統計コア（STDEV.S / STDEV.P 切り替え） ====================================
+def _std_log(logs):
+    """ログ値の標準偏差。ddofをSTD_MODEで切替。"""
+    if logs.size<=1: return 0.0
+    dd = 1 if STD_MODE == "sample" else 0
+    return float(np.std(logs, ddof=dd))
+
+def shapiro_on_logs(rates_pos):
+    """log(率)のShapiro、平均・σ、ログ配列を返す。"""
+    logs=np.log(rates_pos)
+    W,p=stats.shapiro(logs)
+    mu=float(np.mean(logs))
+    sd=_std_log(logs)
+    return W,p,mu,sd,logs
+
+def lognorm_quantile(mu, sd, upper_tail_pct):
+    """上位p%のしきい値（元スケール）"""
+    q=1.0 - upper_tail_pct/100.0
+    z=stats.norm.ppf(q)
+    return float(math.exp(mu + sd*z))
+
+def lognorm_tail_pct_for_threshold(mu, sd, thr):
+    """thresholdが上位何%か（元分布基準）"""
+    if sd<=0: return 0.0
+    z=(math.log(thr)-mu)/sd
+    return float(100.0*(1.0 - stats.norm.cdf(z)))
+
+# ===== QQオーバレイ基準作成 =====================================================
+def _split_for_overlay(logs_orig, removed_values):
+    if logs_orig.size==0: return None
+    osm, osr = stats.probplot(logs_orig, dist="norm", fit=False)
+    osr=np.asarray(osr)
+    logs_removed = np.log(np.asarray(removed_values, dtype=float)) if removed_values else np.array([])
+    tol=1e-12; available=list(range(osr.size)); idx_removed=[]
+    if logs_removed.size>0:
+        targets=np.sort(logs_removed)[::-1]
+        for v in targets:
+            chosen=None
+            for j in available:
+                if abs(osr[j]-v)<=tol: chosen=j; break
+            if chosen is None and available:
+                diffs=[abs(osr[j]-v) for j in available]
+                chosen=available[int(np.argmin(diffs))]
+            if chosen is not None:
+                idx_removed.append(chosen); available.remove(chosen)
+    idx_removed=np.array(sorted(idx_removed)) if len(idx_removed) else np.array([],dtype=int)
+    idx_clean=np.array(sorted(available)) if len(available) else np.array([],dtype=int)
+    return {"osm":np.asarray(osm), "osr":osr, "idx_clean":idx_clean, "idx_removed":idx_removed}
+
+# ===== 描画（タブ切替時は再描画のみ。再計算はしない） ============================
+def draw_plot(kind, ax, data_dict, texts, thr_values,
+              colors, show_ml_points=True, show_cleaned=True):
+    """
+    kind: "qq" / "hist" / "cdf"
+    colors: 要素ごとの色指定 dict
+      - pts_orig, pts_removed, pts_cleaned, fit_line_clean, fit_line_orig
+      - thr_clean, thr_orig, thr_min, ml_flag
+    """
+    ax.clear()
+
+    # 共有データの取り出し
+    logs_orig = data_dict.get("logs_orig", np.array([]))
+    removed_values = data_dict.get("removed_values", [])
+    ml_flag_indices = data_dict.get("ml_flag_indices", set()) if show_ml_points else set()
+    cleaned_logs = data_dict.get("cleaned_logs", np.array([]))
+
+    # 色の取り出し（未指定はデフォ）
+    col_pts_orig     = colors.get("pts_orig",   "C2")
+    col_pts_rem      = colors.get("pts_removed","C3")
+    col_pts_clean    = colors.get("pts_cleaned","C0")
+    col_fit_clean    = colors.get("fit_line_clean",   "C0")
+    col_fit_orig     = colors.get("fit_line_orig",    "C5")
+    col_thr_clean    = colors.get("thr_clean",  "C1")
+    col_thr_orig     = colors.get("thr_orig",   "C4")
+    col_thr_min      = colors.get("thr_min",    "C6")
+    col_ml_flag      = colors.get("ml_flag",    "C8")
+
+    # ===== QQ Plot =====
+    if kind == "qq":
+        if logs_orig.size<3:
+            ax.set_title(texts["PLOT_TITLE_NO_DATA"])
+            ax.figure.canvas.draw(); return
+        split=_split_for_overlay(logs_orig, removed_values)
+        osm, osr = split["osm"], split["osr"]
+        idx_clean, idx_removed = split["idx_clean"], split["idx_removed"]
+
+        # Original点
+        ax.plot(osm, osr, linestyle="None", marker="o", color=col_pts_orig, alpha=0.35,
+                label=texts["PLOT_LABEL_ORIGINAL"])
+        # Original 近似直線（全点でフィット）
+        if osr.size >= 2:
+            a0, b0 = np.polyfit(osm, osr, 1)
+            xx0 = np.linspace(np.min(osm), np.max(osm), 100)
+            ax.plot(xx0, a0*xx0 + b0, "-", color=col_fit_orig, label=texts["PLOT_LABEL_FIT_ORIG"])
+
+        # Removed点
+        if idx_removed.size>0:
+            ax.plot(osm[idx_removed], osr[idx_removed], linestyle="None", marker="x", color=col_pts_rem, alpha=0.9,
+                    label=texts["PLOT_LABEL_REMOVED"])
+
+        # Cleaned点＋近似直線（外れ値除外なしの時は描かない）
+        if show_cleaned and idx_clean.size>=3:
+            x=osm[idx_clean]; y=osr[idx_clean]
+            ax.plot(x, y, linestyle="None", marker="o", color=col_pts_clean, alpha=0.9,
+                    label=texts["PLOT_LABEL_CLEANED"])
+            a,b = np.polyfit(x, y, 1)
+            xx=np.linspace(np.min(osm), np.max(osm), 100)
+            ax.plot(xx, a*xx+b, "-", color=col_fit_clean, label=texts["PLOT_LABEL_FIT"])
+
+        # ML-flag（△：塗り潰しなし）
+        if show_ml_points and ml_flag_indices:
+            ml_idx = np.array(sorted(list(ml_flag_indices)))
+            ml_idx = ml_idx[(ml_idx>=0) & (ml_idx<osr.size)]
+            if ml_idx.size>0:
+                ax.plot(
+                    osm[ml_idx], osr[ml_idx],
+                    linestyle="None", marker="^",
+                    markerfacecolor='none', markeredgecolor=col_ml_flag,
+                    alpha=0.95, label=texts["PLOT_LABEL_ML_FLAG"]
+                )
+
+        # 閾値ライン（水平 / logスケール値）
+        def _hline(xlog, col, lab):
+            if xlog is not None:
+                ax.axhline(xlog, ls="--", color=col, label=lab, alpha=0.9)
+
+        xc = math.log(thr_values["cleaned"])  if (thr_values.get("cleaned")  and np.isfinite(thr_values["cleaned"])  and thr_values["cleaned"]>0)  else None
+        xo = math.log(thr_values["original"]) if (thr_values.get("original") and np.isfinite(thr_values["original"]) and thr_values["original"]>0) else None
+        xm = math.log(thr_values["min_reject"]) if (thr_values.get("min_reject") and np.isfinite(thr_values["min_reject"]) and thr_values["min_reject"]>0) else None
+        _hline(xc, col_thr_clean, texts["PLOT_LABEL_THR_CLEANED"])
+        _hline(xo, col_thr_orig,  texts["PLOT_LABEL_THR_ORIG"])
+        _hline(xm, col_thr_min,   texts["PLOT_LABEL_THR_MINREJ"])
+
+        ax.set_xlabel(texts["PLOT_XLABEL"]); ax.set_ylabel(texts["PLOT_YLABEL"])
+        ax.set_title(texts["PLOT_TITLE_BASE"])
+        ax.legend(loc="best"); ax.figure.canvas.draw(); return
+
+    # ===== Histogram =====
+    if kind == "hist":
+        if logs_orig.size<1:
+            ax.set_title(texts["HIST_NO_DATA"]); ax.set_ylim(bottom=0); ax.figure.canvas.draw(); return
+        ax.hist(logs_orig, bins="auto", alpha=0.5, label=texts["PLOT_LABEL_ORIGINAL"], color=colors.get("pts_orig","C2"))
+        if show_cleaned and cleaned_logs.size>0:
+            ax.hist(cleaned_logs, bins="auto", alpha=0.7, label=texts["PLOT_LABEL_CLEANED"], color=colors.get("pts_cleaned","C0"))
+
+        def _vline(xlog, col, lab):
+            if xlog is not None:
+                ax.axvline(xlog, ls="--", color=col, label=lab, alpha=0.9)
+
+        xc = math.log(thr_values["cleaned"])  if (thr_values.get("cleaned")  and np.isfinite(thr_values["cleaned"])  and thr_values["cleaned"]>0)  else None
+        xo = math.log(thr_values["original"]) if (thr_values.get("original") and np.isfinite(thr_values["original"]) and thr_values["original"]>0) else None
+        xm = math.log(thr_values["min_reject"]) if (thr_values.get("min_reject") and np.isfinite(thr_values["min_reject"]) and thr_values["min_reject"]>0) else None
+        _vline(xc, colors.get("thr_clean","C1"), texts["PLOT_LABEL_THR_CLEANED"])
+        _vline(xo, colors.get("thr_orig","C4"),  texts["PLOT_LABEL_THR_ORIG"])
+        _vline(xm, colors.get("thr_min","C6"),   texts["PLOT_LABEL_THR_MINREJ"])
+
+        ax.set_xlabel("log(defect rate)"); ax.set_ylabel("count")
+        ax.set_ylim(bottom=0)
+        ax.set_title(texts["PLOT_TITLE_HIST"]); ax.legend(loc="best"); ax.figure.canvas.draw(); return
+
+    # ===== CDF =====
+    if kind == "cdf":
+        if logs_orig.size<1:
+            ax.set_title(texts["CDF_NO_DATA"]); ax.set_ylim(0,1); ax.figure.canvas.draw(); return
+
+        def ecdf(x):
+            xs = np.sort(x); ys = np.arange(1, xs.size+1)/xs.size
+            return xs, ys
+
+        xs, ys = ecdf(logs_orig); ax.plot(xs, ys, label=texts["PLOT_LABEL_ORIGINAL"], color=colors.get("pts_orig","C2"))
+        if show_cleaned and cleaned_logs.size>0:
+            xs2, ys2 = ecdf(cleaned_logs); ax.plot(xs2, ys2, label=texts["PLOT_LABEL_CLEANED"], color=colors.get("pts_cleaned","C0"))
+
+        def _vline(xlog, col, lab):
+            if xlog is not None:
+                ax.axvline(xlog, ls="--", color=col, label=lab, alpha=0.9)
+
+        xc = math.log(thr_values["cleaned"])  if (thr_values.get("cleaned")  and np.isfinite(thr_values["cleaned"])  and thr_values["cleaned"]>0)  else None
+        xo = math.log(thr_values["original"]) if (thr_values.get("original") and np.isfinite(thr_values["original"]) and thr_values["original"]>0) else None
+        xm = math.log(thr_values["min_reject"]) if (thr_values.get("min_reject") and np.isfinite(thr_values["min_reject"]) and thr_values["min_reject"]>0) else None
+        _vline(xc, colors.get("thr_clean","C1"), texts["PLOT_LABEL_THR_CLEANED"])
+        _vline(xo, colors.get("thr_orig","C4"),  texts["PLOT_LABEL_THR_ORIG"])
+        _vline(xm, colors.get("thr_min","C6"),   texts["PLOT_LABEL_THR_MINREJ"])
+
+        ax.set_xlabel("log(defect rate)"); ax.set_ylabel("CDF")
+        ax.set_ylim(0,1)
+        ax.set_title(texts["PLOT_TITLE_CDF"]); ax.legend(loc="best"); ax.figure.canvas.draw(); return
+
+# ===== 画像コピー/保存（TkAgg rendererを使う：fig.canvasを差し替えない） =========
+def copy_figure_to_clipboard_and_optionally_save(fig, fig_canvas, window, texts, ask_save=True):
+    """
+    既存の FigureCanvasTkAgg(fig_canvas) を使って RGBA を取り出す。
+    ※ 環境差で buffer_rgba() が不安定なため、print_to_buffer() を優先使用。
+    """
+    import numpy as np
+    import sys
+
+    # 1) 描画を確定させてからバッファ取得
+    fig_canvas.draw()
+    try:
+        # 推奨: バックエンド非依存で幅高さも返る
+        buf, (w, h) = fig_canvas.print_to_buffer()
+        rgba = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4))
+    except Exception:
+        # フォールバック: 一部環境でのみ必要
+        w, h = fig_canvas.get_width_height()
+        renderer = fig_canvas.get_renderer()
+        # rendererが未初期化な環境向け保険
+        if renderer is None:
+            fig_canvas.draw()
+            renderer = fig_canvas.get_renderer()
+        buf = renderer.buffer_rgba()
+        rgba = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4))
+
+    # 2) クリップボードへ（WinはCF_DIB、それ以外はPNGパスをコピー）
+    def _fallback_copy_path(png_path):
+        sg.clipboard_set(png_path)
+        sg.popup_no_titlebar(texts["COPIED"] + f"（{os.path.basename(png_path)}）")
+
+    if sys.platform.startswith("win"):
+        try:
+            # BGRAに並べ替え（CF_DIB仕様）
+            bgra = rgba[..., [2, 1, 0, 3]].copy()
+            import ctypes, struct, time
+            biSize=40; biWidth=w; biHeight=-h; biPlanes=1; biBitCount=32; biCompression=0
+            biSizeImage=w*h*4; biXPelsPerMeter=0; biYPelsPerMeter=0; biClrUsed=0; biClrImportant=0
+            header = struct.pack("<IiiHHIIiiII", biSize,biWidth,biHeight,biPlanes,biBitCount,
+                                 biCompression,biSizeImage,biXPelsPerMeter,biYPelsPerMeter,biClrUsed,biClrImportant)
+            dib = header + bgra.tobytes()
+
+            user32 = ctypes.windll.user32; kernel32 = ctypes.windll.kernel32
+            GMEM_MOVEABLE=0x0002; CF_DIB=8
+            try: hwnd = int(window.TKroot.winfo_id())
+            except Exception: hwnd = 0
+
+            for _ in range(15):
+                if user32.OpenClipboard(hwnd): break
+                time.sleep(0.02)
+            else:
+                raise RuntimeError("OpenClipboard failed")
+
+            try:
+                user32.EmptyClipboard()
+                hGlobal = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(dib))
+                if not hGlobal: raise MemoryError("GlobalAlloc failed")
+                pData = kernel32.GlobalLock(hGlobal)
+                if not pData:
+                    kernel32.GlobalFree(hGlobal); raise MemoryError("GlobalLock failed")
+                ctypes.memmove(pData, dib, len(dib))
+                kernel32.GlobalUnlock(hGlobal)
+                if not user32.SetClipboardData(CF_DIB, hGlobal):
+                    kernel32.GlobalFree(hGlobal); raise RuntimeError("SetClipboardData failed")
+            finally:
+                user32.CloseClipboard()
+
+            sg.popup_no_titlebar(texts["COPIED"])
+        except Exception:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            fig.savefig(tmp.name, dpi=fig.dpi, bbox_inches="tight")
+            tmp.close()
+            _fallback_copy_path(tmp.name)
+    else:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        fig.savefig(tmp.name, dpi=fig.dpi, bbox_inches="tight")
+        tmp.close()
+        _fallback_copy_path(tmp.name)
+
+    # 3) 任意のPNG保存ダイアログ
+    if ask_save:
+        save_path = sg.popup_get_file(texts["DIALOG_SAVE_PNG"], save_as=True,
+                                      file_types=(("PNG","*.png"),),
+                                      default_extension=".png")
+        if save_path:
+            fig.savefig(save_path, dpi=fig.dpi, bbox_inches="tight")
+
+    # 念のため再描画（TkAggを壊していないので以後も更新OK）
+    fig_canvas.draw_idle()
+
+# ===== ML関連（特徴量・学習） ====================================================
+def _logit(p):
+    p=np.clip(p, EPS, 1-EPS); return np.log(p/(1-p))
+
+def _ml_features_from_df(df):
+    """Name/Rate から品目内ロバストZなどの簡易特徴を作る"""
+    rate = pd.to_numeric(df['Rate'], errors="coerce")
+    if (rate>1.0).mean()>=0.25 or (np.nanpercentile(rate,95)>1.2): rate=rate/100.0
+    df=df.copy(); df['rate']=rate.clip(0,1)
+    df['log_rate']=np.where(df['rate']>0, np.log(np.clip(df['rate'], EPS, None)), np.nan)
+    df['logit_rate']=_logit(df['rate'])
+
+    names=df['Name'].astype(str)
+    for key in ['log_rate','logit_rate']:
+        s=df[key]
+        med=s.groupby(names).transform(np.nanmedian)
+        mad=s.groupby(names).transform(lambda x: np.nanmedian(np.abs(x-np.nanmedian(x))) or 1e-12)
+        df[f'{key}_z'] = ((s - med)/mad).replace([np.inf,-np.inf], np.nan)
+
+    df['grp_count']=names.map(names.value_counts())
+    df['rate_rank_in_grp']=df.groupby(names)['rate'].rank(pct=True)
+    use_cols=['rate','log_rate','logit_rate','log_rate_z','logit_rate_z','grp_count','rate_rank_in_grp']
+    X=df[use_cols].fillna(0).values
+    return X, use_cols
+
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import roc_auc_score
+
+def train_ml_from_csv(train_csv_path, texts=TEXTS["ja"]):
+    """CSV(A=Name,B=Rate,C=IsOutlier)を学習してモデル辞書を返す"""
+    df = read_csv_df(train_csv_path)
+    cols=list(df.columns)
+    if len(cols)<3:
+        raise ValueError(texts["ERR_TRAIN_COLS"])
+    df = df.rename(columns={cols[0]:'Name', cols[1]:'Rate', cols[2]:'IsOutlier'})
+    y = pd.to_numeric(df['IsOutlier'], errors="coerce").fillna(0).astype(int).values
+    X, feat_cols = _ml_features_from_df(df[['Name','Rate']].copy())
+
+    clf = GradientBoostingClassifier(random_state=RANDOM_STATE)
+    # ざっくりCV表示（失敗しても無視）
+    try:
+        skf=StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
+        aucs=[]
+        for tr,te in skf.split(X,y):
+            clf.fit(X[tr], y[tr]); p=clf.predict_proba(X[te])[:,1]
+            aucs.append(roc_auc_score(y[te], p))
+        print(f"[ML] CV AUC: {np.mean(aucs):.3f} ± {np.std(aucs):.3f}")
+    except Exception:
+        pass
+    clf.fit(X,y)
+    artifact = {
+        "model": clf,
+        "feature_columns": feat_cols,
+        "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "version": APP_VERSION,
+        "algo": "GradientBoostingClassifier"
+    }
+    return artifact
+
+# ===== 総合計算（外れ値モード込み） =============================================
+def compute_all_with_mode(rates_raw, tail_pct, alpha,
+                          include_zero_in_overall=False,
+                          mode="none",
+                          ml_artifact=None, ml_threshold=0.5,
+                          max_remove_frac=DEFAULT_MAX_REMOVE_FRAC,
+                          return_ml_flags=False,
+                          texts=TEXTS["ja"]):
+    out={"messages":[]}
+    # スケール正規化
+    arr, scale = detect_and_normalize_scale(rates_raw)
+    arr = np.asarray(arr, dtype=float); arr = arr[np.isfinite(arr)]
+    arr = arr[(arr>=0.0) & (arr<=1.0)]
+
+    # 最低限チェック
+    ok_basic, reasons, N_total, N_pos = validate_counts(arr, texts)
+    out.update(dict(scale=scale, n_total=N_total, n_pos=N_pos))
+    out["messages"].extend(reasons); out["basic_ok"]=ok_basic
+
+    pos = arr[arr>0]
+
+    # 0%含む全体補正（Excel準拠）
+    eff_pct = float(tail_pct)*(N_total/N_pos) if (include_zero_in_overall and N_pos>0) else float(tail_pct)
+    out["effective_tail_pct"]=eff_pct; out["include_zero_in_overall"]=include_zero_in_overall
+    out["a_over_100"] = (eff_pct>=100.0)
+
+    # Original（除外なし）
+    orig = {"W":np.nan,"p":np.nan,"mu":np.nan,"sd":np.nan,"thr":np.nan,"logs":np.array([])}
+    if pos.size>=3:
+        try:
+            W,p,mu,sd,logs = shapiro_on_logs(pos)
+            if eff_pct<=0: thr=float("nan")
+            elif eff_pct>=100.0: thr=0.0
+            else: thr = math.exp(mu) if sd<=0 else lognorm_quantile(mu, sd, eff_pct)
+            orig.update(dict(W=W,p=p,mu=mu,sd=sd,thr=thr,logs=logs))
+        except Exception as e:
+            out["messages"].append(texts["MSG_SHAPIRO_ERR_ORIG"].format(err=e))
+    else:
+        out["messages"].append(texts["MSG_LOG_DATA_SHORT"])
+
+    # 外れ値除外（逐次 or ML）
+    removed = []
+    if pos.size>=3:
+        if mode == "none":
+            stop_reason = texts["MSG_MODE_NONE"]
+            cleaned_arr = pos.copy()
+            ml_flag_indices = set()
+
+        elif mode == "sequential":
+            working = pos.copy()
+            max_remove = int(math.floor(pos.size * max_remove_frac))
+            step=0
+            while True:
+                try:
+                    Wc,pc,muc,sdc,logc = shapiro_on_logs(working)
+                except Exception as e:
+                    out["messages"].append(texts["MSG_SHAPIRO_ERR_SEQ"].format(err=e))
+                    break
+                if pc>=alpha:
+                    stop_reason=texts["MSG_OK"].format(p=pc, alpha=alpha)
+                    cleaned_arr=working.copy(); break
+                if step>=max_remove or working.size<=3:
+                    stop_reason=texts["MSG_MODE_SEQ_LIMIT"]; cleaned_arr=working.copy(); break
+                idx_max=int(np.argmax(working))
+                removed.append(float(working[idx_max]))
+                working = np.delete(working, idx_max); step+=1
+            ml_flag_indices = set()
+
+        elif mode == "ml":
+            if (ml_artifact is None):
+                stop_reason=texts["MSG_MODE_ML_NONE"]
+                cleaned_arr = pos.copy(); ml_flag_indices=set()
+            else:
+                df_tmp = pd.DataFrame({"Name":["SINGLE"]*len(pos), "Rate":pos})
+                X, _ = _ml_features_from_df(df_tmp[['Name','Rate']].copy())
+                model = ml_artifact.get("model", ml_artifact)
+                proba = model.predict_proba(X)[:,1]
+                flag = (proba >= float(ml_threshold))
+                ml_flag_indices = set(np.where(flag)[0].tolist())
+                idx_flag = np.where(flag)[0]
+                max_remove = int(math.floor(pos.size * max_remove_frac))
+                if idx_flag.size > max_remove:
+                    order = np.argsort(proba[idx_flag])[::-1]
+                    idx_flag = idx_flag[order[:max_remove]]
+                mask = np.ones(pos.size, dtype=bool); mask[idx_flag] = False
+                cleaned_arr = pos[mask]
+                removed = pos[~mask].tolist()
+                stop_reason = texts["MSG_MODE_ML_USED"].format(thr=ml_threshold)
+    else:
+        cleaned_arr = pos.copy()
+        stop_reason = texts["MSG_LOG_DATA_SHORT"]
+        ml_flag_indices = set()
+
+    # Cleaned 統計
+    cleaned = {"W":np.nan,"p":np.nan,"mu":np.nan,"sd":np.nan,"thr":np.nan,"logs":np.array([]),
+               "removed_values":removed, "stop_reason":stop_reason}
+    if cleaned_arr.size>=3:
+        try:
+            Wc,pc,muc,sdc,logc = shapiro_on_logs(cleaned_arr)
+            thc = float("nan") if eff_pct<=0 else (0.0 if eff_pct>=100.0 else (math.exp(muc) if sdc<=0 else lognorm_quantile(muc,sdc,eff_pct)))
+            cleaned.update(dict(W=Wc,p=pc,mu=muc,sd=sdc,thr=thc,logs=logc))
+        except Exception as e:
+            out["messages"].append(texts["MSG_SHAPIRO_ERR_CLEAN"].format(err=e))
+
+    out["orig"]=orig; out["cleaned"]=cleaned
+    overall_ok = ok_basic and np.isfinite(cleaned.get("p",np.nan)) and (cleaned["p"]>=alpha)
+    out["overall_ok"]=overall_ok
+    if overall_ok and np.isfinite(cleaned.get("p",np.nan)):
+        out["messages"].append(texts["MSG_OK"].format(p=cleaned['p'], alpha=alpha))
+    else:
+        if not ok_basic:
+            pass
+        elif np.isfinite(cleaned.get("p",np.nan)):
+            out["messages"].append(texts["MSG_NG"].format(p=cleaned['p'], alpha=alpha))
+        else:
+            out["messages"].append(texts["MSG_P_NA"])
+
+    # 元しきい値で外れが弾けるか→最小しきい値/対応%の算出
+    outlier_check={"orig_thr":orig["thr"], "missed_outliers":[], "required_thr":None, "required_tail_pct":None}
+    if len(removed)>0 and np.isfinite(orig["thr"]):
+        removed_vals = sorted(removed, reverse=True)
+        missed = [v for v in removed_vals if not (v>=orig["thr"])]
+        outlier_check["missed_outliers"]=missed
+        if len(missed)>0:
+            req_thr = min(missed); outlier_check["required_thr"]=req_thr
+            req_tail = lognorm_tail_pct_for_threshold(orig["mu"], orig["sd"], req_thr) if (np.isfinite(orig["sd"]) and orig["sd"]>0) else 0.0
+            outlier_check["required_tail_pct"]=req_tail
+    out["outlier_check"]=outlier_check
+
+    if return_ml_flags:
+        out["ml_flags_indices"] = ml_flag_indices
+    return out
+
+# ===== 一括処理（DataFrame→集計） ==============================================
+def batch_from_dataframe(df, key_col, rate_col, tail_pct, alpha,
+                         include_zero_in_overall, mode, ml_artifact, ml_threshold,
+                         max_remove_frac, std_mode_label, texts):
+    rows = []
+    if key_col not in df.columns or rate_col not in df.columns:
+        raise ValueError(texts["ERR_SELECT_COLUMNS"])
+    tmp = pd.DataFrame({"key": df[key_col].astype(str),
+                        "rate": pd.to_numeric(df[rate_col], errors="coerce")}).dropna(subset=["rate"])
+    if tmp.empty:
+        return pd.DataFrame()
+    for key, g in tmp.groupby("key"):
+        rates = g["rate"].tolist()
+        try:
+            res = compute_all_with_mode(
+                rates, tail_pct, alpha,
+                include_zero_in_overall=include_zero_in_overall,
+                mode=mode,
+                ml_artifact=ml_artifact,
+                ml_threshold=ml_threshold,
+                max_remove_frac=max_remove_frac,
+                return_ml_flags=False,
+                texts=texts
+            )
+            cleaned = res["cleaned"]; orig = res["orig"]; oc = res["outlier_check"]
+            rows.append({
+                "Name": key,
+                "N_total": len(rates),
+                "N_pos": int(np.sum(np.asarray(rates) > 0)),
+                "Scale": res["scale"],
+                "StdMode": std_mode_label,
+                "OutlierMode": mode,
+                "MaxRemoveFrac": max_remove_frac,
+                "IncludeZeroOverall": include_zero_in_overall,
+                "TailPct_Input": tail_pct,
+                "TailPct_Effective": res.get("effective_tail_pct", tail_pct),
+                "ShapiroW_Cleaned": cleaned.get("W", np.nan),
+                "pvalue_Cleaned": cleaned.get("p", np.nan),
+                "W_Original": orig.get("W", np.nan),
+                "p_Original": orig.get("p", np.nan),
+                "Threshold_Cleaned": cleaned.get("thr", np.nan),
+                "Threshold_Original": oc.get("orig_thr", np.nan),
+                "MinThreshold_RejectOutliers": oc.get("required_thr", np.nan),
+                "MinThreshold_TailPct_onOriginal": oc.get("required_tail_pct", np.nan),
+                "RemovedCount": len(cleaned.get("removed_values", [])),
+                "RemovedTop10": ", ".join([f"{v:.8f}" for v in cleaned.get("removed_values", [])[:10]]),
+                "StopReason": cleaned.get("stop_reason", ""),
+                "OverallOK": res.get("overall_ok", False),
+                "Messages": " / ".join(res.get("messages", [])),
+                "RunAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                "AppVersion": APP_VERSION,
+                "RandomSeed": RANDOM_STATE
+            })
+        except Exception as e:
+            rows.append({"Name": key, "Error": str(e),
+                         "RunAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                         "AppVersion": APP_VERSION,
+                         "RandomSeed": RANDOM_STATE})
+    out_df = pd.DataFrame(rows)
+    preferred = [
+        "Name","N_total","N_pos","Scale","StdMode","OutlierMode","MaxRemoveFrac",
+        "IncludeZeroOverall","TailPct_Input","TailPct_Effective",
+        "ShapiroW_Cleaned","pvalue_Cleaned","W_Original","p_Original",
+        "Threshold_Cleaned","Threshold_Original",
+        "MinThreshold_RejectOutliers","MinThreshold_TailPct_onOriginal",
+        "RemovedCount","StopReason","RemovedTop10","OverallOK","Messages",
+        "RunAt","AppVersion","RandomSeed","Error"
+    ]
+    for c in preferred:
+        if c not in out_df.columns: out_df[c] = np.nan
+    out_df = out_df[preferred]
+    return out_df
+
+# ===== 言語切替（ラベル更新） ====================================================
+
+def _apply_ui_font(window, family, size=9):
+    # フォントを更新したいキー群（必要なら足して）
+    keys_to_update = [
+        "-PLOT-HDR-","-TAB-QQ-TITLE-","-TAB-HIST-TITLE-","-TAB-CDF-TITLE-",
+        "-LBL-INPUT-","-CSVBTN-","-READCSV-","-LBL-RATE-COL-","-LBL-KEY-COL-",
+        "-LBL-PERC-","-LBL-ALPHA-","-RUN-","-CLEAR-","-LANG-JA-","-LANG-ZH-",
+        "-MODE-HDR-","-MODE-NONE-","-MODE-SEQ-","-MODE-ML-","-MODE-ML-THR-LBL-",
+        "-SHOW-ML-PTS-","-LBL-STD-","-STD-S-","-STD-P-","-LBL-MAXREM-",
+        "-COLOR-HDR-","-COLOR-LEGEND-LBL-","-COLOR-CLEAN-LBL-","-COLOR-ORIG-LBL-",
+        "-COLOR-MINREJ-LBL-","-COLOR-PTS-ORIG-LBL-","-COLOR-PTS-REM-LBL-",
+        "-COLOR-PTS-CLEAN-LBL-","-COLOR-FIT-LBL-","-COLOR-FIT-ORIG-LBL-","-COLOR-ML-LBL-",
+        "-BATCH-HDR-","-BATCH-RUN-",
+        "-LBL-JUDG-","-LBL-SUMMARY-","-LBL-W-","-LBL-P-","-LBL-THR-","-NOTICE-",
+        "-OUTLIER-HDR-","-LBL-REMCOUNT-","-LBL-REMSTOP-","-LBL-REMVALUES-",
+        "-LBL-ORIGTHR-","-LBL-MISSED-","-LBL-REQTHR-","-LBL-REQTAIL-",
+        "-COPY-THR-","-COPY-REQ-","-COPY-ORIG-",
+        "-ML-HDR-","-ML-TRAIN-LBL-","-ML-TRAIN-BROWSE-","-ML-TRAIN-RUN-",
+        "-ML-MODEL-LBL-","-ML-BROWSE-","-ML-LOAD-","-ML-SCORE-","-ML-SAVE-",
+        # 手動追加
+        "-CAUTIONARY-NOTE-","-TAB-QQ-","-TAB-HIST-","-TAB-CDF-","-LBL-EFFPCT-"
+    ]
+    for k in keys_to_update:
+        if k in window.AllKeysDict:
+            try:
+                window[k].update(font=(family, size))
+            except Exception:
+                pass
+
+# ===== GUI本体 ===================================================================
+def main():
+    lang="zh-cn"; t=TEXTS[lang]
+    sg.theme("SystemDefault")
+
+    # 右：グラフ（タブ＋Canvas＋品名ビューア）
+
+    color_legend_row = [sg.Text(t["COLOR_LEGEND"], key="-COLOR-LEGEND-LBL-")]
+    for i, hx in enumerate(C_HEX):
+        color_legend_row.append(sg.Text(f" C{i} ", background_color=hx,
+                                        text_color="black" if i in [2,7] else "white"))
+
+    tab_qq   = sg.Tab(t["TAB_QQ"],   [[]], key="-TAB-QQ-")
+    tab_hist = sg.Tab(t["TAB_HIST"], [[]], key="-TAB-HIST-")
+    tab_cdf  = sg.Tab(t["TAB_CDF"],  [[]], key="-TAB-CDF-")
+
+    viewer_bar = [
+        sg.Text(t["BVIEW_BAR_HDR"], key="-BVIEW-HDR-"), sg.Push(),
+        sg.Text(t["BVIEW_NOW"], key="-BVIEW-NOW-LBL-"), sg.Text("0 / 0", key="-BVIEW-NOW-"),
+        sg.Text("", key="-BVIEW-NAME-", size=(24,1)),
+        sg.Button("◀", key="-BVIEW-PREV-", disabled=True),
+        sg.Button("▶", key="-BVIEW-NEXT-", disabled=True),
+        sg.Button(t["BVIEW_PICK"], key="-BVIEW-PICK-", disabled=True),
+    ]
+
+    right_col = sg.Column(
+        [
+            [sg.Text(t["PLOT_HDR"], key="-PLOT-HDR-")],
+            [sg.TabGroup([[tab_qq, tab_hist, tab_cdf]], key="-TABGRP-", enable_events=True)],
+            [sg.Canvas(key="-CANVAS-", size=(int(FIG_WIDTH_IN*FIG_DPI), int(FIG_HEIGHT_IN*FIG_DPI)))],
+            viewer_bar,
+            [sg.Button(t["COPY_PLOT"], key="-COPY-PLOT-")],  # ← 使いたい時はコメント解除
+
+            [sg.Frame(t["COLOR_HDR"], [
+                color_legend_row,
+                [sg.Text(t["COLOR_LINE_HDR"], key="-COLOR-LINES-"),
+                 sg.Text(color_code_label("COLOR_ORIG","C4"), key="-COLOR-ORIG-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C4", key="-COLOR-ORIG-", readonly=True, enable_events=True),
+                 sg.Text(color_code_label("COLOR_CLEAN","C1"), key="-COLOR-CLEAN-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C1", key="-COLOR-CLEAN-", readonly=True, enable_events=True),
+                 sg.Text(color_code_label("COLOR_MINREJ","C6"), key="-COLOR-MINREJ-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C6", key="-COLOR-MINREJ-", readonly=True, enable_events=True)],
+                [sg.Text(t["COLOR_POINTS_HDR"], key="-COLOR-POINTS-"),
+                 sg.Text(color_code_label("COLOR_ORIG_PTS","C2"), key="-COLOR-PTS-ORIG-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C2", key="-COLOR-PTS-ORIG-", readonly=True, enable_events=True),
+                 sg.Text(color_code_label("COLOR_CLEAN_PTS","C0"), key="-COLOR-PTS-CLEAN-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C0", key="-COLOR-PTS-CLEAN-", readonly=True, enable_events=True),
+                 sg.Text(color_code_label("COLOR_REM_PTS","C3"), key="-COLOR-PTS-REM-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C3", key="-COLOR-PTS-REM-", readonly=True, enable_events=True),
+                 sg.Text(color_code_label("COLOR_ML_FLAG","C8"), key="-COLOR-ML-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C8", key="-COLOR-ML-", readonly=True, enable_events=True)],
+                [sg.Text(t["COLOR_FITLINE_HDR"], key="-COLOR-FITLINES-"),
+                 sg.Text(color_code_label("COLOR_FIT_LINE_ORIG","C2"), key="-COLOR-FIT-ORIG-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C2", key="-COLOR-FIT-ORIG-", readonly=True, enable_events=True),
+                 sg.Text(color_code_label("COLOR_FIT_LINE","C0"), key="-COLOR-FIT-LBL-"),
+                 sg.Combo(COLOR_CHOICES, default_value="C0", key="-COLOR-FIT-", readonly=True, enable_events=True)],
+            ], key="-COLOR-HDR-", relief=sg.RELIEF_SUNKEN, pad=(0,5))],
+        ],
+        pad=(5,5),
+        vertical_alignment="top"
+    )
+
+
+    # 左：入力＆設定
+
+
+    left_inner = [
+        [sg.Text(t["CAUTIONARY_NOTE"], key="-CAUTIONARY-NOTE-", text_color="#FFB000", background_color="2C2C2C")],
+        [sg.Button(t["LANG_ZH"], key="-LANG-ZH-"), sg.Button(t["LANG_JA"], key="-LANG-JA-")],
+        [sg.Text(t["INPUT_LABEL"], key="-LBL-INPUT-")],
+        [sg.Multiline(size=(45,8), key="-TEXT-", tooltip="例: 0.01 0 0.5 0.02 ...（プレビュー用）")],
+        [sg.Button(t["RUN"], key="-RUN-"), sg.Button(t["CLEAR"], key="-CLEAR-")],
+        [sg.Text(t["ORIGTHR"], key="-LBL-ORIGTHR-"), sg.Text("", key="-ORIGTHR-"),
+         sg.Button(t["COPY_ORIG"], key="-COPY-ORIG-")],
+        [sg.Text(t["THRESH"], key="-LBL-THR-"), sg.Text("", key="-THRESH-"),
+         sg.Button(t["COPY_THR"], key="-COPY-THR-")],
+        [sg.Text(t["REQTHR"], key="-LBL-REQTHR-"), sg.Text("", key="-REQTHR-"),
+         sg.Button(t["COPY_REQ"], key="-COPY-REQ-")],
+
+        [sg.HorizontalSeparator()],
+        [sg.Text(t["FRAME_BATCH_HDR"], key="-FRAME-BATCH-")],
+        [sg.Input(key="-CSVPATH-", size=(40,1)),
+         sg.FileBrowse(t["CSV_BTN"], key="-CSVBTN-", file_types=(("CSV","*.csv"),)),
+         sg.Button(t["CSV_READ"], key="-READCSV-")],
+        [sg.Text(t["CSV_RATE_COL"], key="-LBL-RATE-COL-"),
+         sg.Combo(values=[], key="-COL-RATE-", size=(24,1), readonly=True, disabled=True)],
+        [sg.Text(t["CSV_KEY_COL"], key="-LBL-KEY-COL-"),
+         sg.Combo(values=[], key="-COL-KEY-", size=(24,1), readonly=True, disabled=True)],
+        [sg.Text(t["BATCH_HDR"], key="-BATCH-HDR-", text_color="black")],
+        [sg.Button(t["BATCH_RUN"], key="-BATCH-RUN-")],
+        
+        [sg.HorizontalSeparator()],
+        [sg.Text(t["FRAME_SETTINGS_HDR"], key="-FRAME-SETTINGS-")],
+        [sg.Text(t["PERC"], key="-LBL-PERC-"), sg.Input("5", size=(6,1), key="-PERC-"),
+         sg.Text(t["ALPHA"], key="-LBL-ALPHA-"), sg.Input("0.05", size=(6,1), key="-ALPHA-")],
+        [sg.Text(t["STD_MODE"], key="-LBL-STD-"),
+         sg.Radio(t["STD_SAMPLE"], "STDM", key="-STD-S-", default=(STD_MODE=="sample")),
+         sg.Radio(t["STD_POP"], "STDM", key="-STD-P-", default=(STD_MODE=="population"))],
+        [sg.Text(t["MAX_REMOVE"], key="-LBL-MAXREM-"), sg.Input(f"{DEFAULT_MAX_REMOVE_FRAC:.2f}", size=(6,1), key="-MAXREM-")],
+        [sg.Checkbox(t["INCL_ZERO_PCT"], default=False, key="-INCLZERO-PCT-")],
+        [sg.Frame(t["MODE_HDR"], [
+            [sg.Radio(t["MODE_NONE"], "OUTMODE", key="-MODE-NONE-", default=True),
+             sg.Radio(t["MODE_SEQ"],  "OUTMODE", key="-MODE-SEQ-")],
+            [sg.Radio(t["MODE_ML"],   "OUTMODE", key="-MODE-ML-"),
+             sg.Text(t["MODE_ML_THR"], key="-MODE-ML-THR-LBL-"),
+             sg.Input("0.5", size=(6,1), key="-MODE-ML-THR-")],
+            [sg.Checkbox(t["SHOW_ML_PTS"], default=True, key="-SHOW-ML-PTS-")]
+        ], key="-MODE-HDR-", relief=sg.RELIEF_SUNKEN, pad=(0,5))],
+
+        [sg.HorizontalSeparator()],
+        [sg.Text(t["FRAME_RESULT_HDR"], key="-FRAME-RESULT-")],
+        [sg.Text(t["JUDG"], key="-LBL-JUDG-", size=(9,1)), sg.Text("", key="-JUDG-", size=(40,1))],
+        [sg.Text(t["SUMMARY"], key="-LBL-SUMMARY-", size=(9,1)), sg.Text("", key="-SUMMARY-", size=(40,2))],
+        [sg.Text(t["W"], key="-LBL-W-"), sg.Text("", key="-W-"),
+         sg.Text("   "+t["P"], key="-LBL-P-"), sg.Text("", key="-P-")],
+        [sg.Text(t["NOTICE_ZERO"], key="-NOTICE-")],
+        [sg.Text(t["EFFPCT"], key="-LBL-EFFPCT-"), sg.Text("", key="-EFFPCT-")],
+
+        [sg.HorizontalSeparator()],
+        [sg.Text(t["OUTLIER_HDR"], key="-OUTLIER-HDR-")],
+        [sg.Text(t["REMCOUNT"], key="-LBL-REMCOUNT-"), sg.Text("", key="-REMCOUNT-"),
+         sg.Text("  "+t["REMSTOP"], key="-LBL-REMSTOP-"), sg.Text("", key="-REMSTOP-")],
+        [sg.Text(t["REMVALUES"], key="-LBL-REMVALUES-"), sg.Text("", key="-REMVALUES-", size=(40,3))],
+        [sg.Text(t["MISSED"], key="-LBL-MISSED-"), sg.Text("", key="-MISSED-")],
+        [sg.Text(t["REQTAIL"], key="-LBL-REQTAIL-"), sg.Text("", key="-REQTAIL-")],
+
+        [sg.HorizontalSeparator()],
+        [sg.Text(t["ML_HDR"], key="-ML-HDR-", text_color="black")],
+        [sg.Text(t["ML_TRAIN_CSV"], key="-ML-TRAIN-LBL-", size=(10,1)),
+         sg.Input(key="-ML-TRAIN-PATH-", size=(20,1)),
+         sg.FileBrowse(t["ML_TRAIN_BROWSE"], key="-ML-TRAIN-BROWSE-", file_types=(("CSV","*.csv"),)),
+         sg.Button(t["ML_TRAIN_RUN"], key="-ML-TRAIN-RUN-")],
+        [sg.Text(t["ML_MODEL"], key="-ML-MODEL-LBL-", size=(10,1)),
+         sg.Input(key="-ML-MODEL-PATH-", size=(20,1)),
+         sg.FileBrowse(t["ML_BROWSE"], key="-ML-BROWSE-", file_types=(("PKL","*.pkl"),))],
+        [sg.Button(t["ML_LOAD"], key="-ML-LOAD-"),
+         sg.Button(t["ML_SCORE"], key="-ML-SCORE-"),
+         sg.Button(t["ML_SAVE"], key="-ML-SAVE-"),
+         sg.Text("", key="-ML-INFO-", size=(20,1))]
+    ]
+    left_col = sg.Column(left_inner, pad=(5,5), vertical_alignment="top")
+
+    # 全体スクロール（右に図）
+    content = sg.Column([[left_col, right_col]], pad=(0,0))
+    scroll = sg.Column([[content]], scrollable=True, vertical_scroll_only=False,
+        expand_x=True, expand_y=True, size=(1500, 720), pad=(0,0))
+
+    window = sg.Window(t["TITLE"], [[scroll]], finalize=True, resizable=True)
+
+    # Matplotlib キャンバス初期化（一枚を使い回す）
+    def _create_canvas():
+        for c in window["-CANVAS-"].TKCanvas.winfo_children(): c.destroy()
+        fig = Figure(figsize=(FIG_WIDTH_IN, FIG_HEIGHT_IN), dpi=FIG_DPI)
+        ax = fig.add_subplot(111)
+        canvas = FigureCanvasTkAgg(fig, master=window["-CANVAS-"].TKCanvas)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=1)
+        return fig, ax, canvas
+    fig, ax, canvas = _create_canvas()
+
+    # ---- 状態保持 --------------------------------------------------------------
+    state = {
+        "thr":None,"req_thr":None,"orig_thr":None,
+        "fig":fig,"ax":ax,"canvas":canvas,
+        "ml_artifact":None,
+        "ml_threshold":0.5,
+        "df_loaded": None,
+        "last_numbers": [],
+        "logs_orig": np.array([]),
+        "cleaned_logs": np.array([]),
+        "removed_values": [],
+        "ml_flags_indices": set(),
+        "mode": "none",
+        # 一括処理ビューア（新規）
+        "batch_view": {
+            "enabled": False,
+            "names": [],
+            "data_by_name": {},  # name -> [rates...]
+            "idx": 0
+        }
+    }
+
+    # ---- 小ユーティリティ ------------------------------------------------------
+    def current_thr_values():
+        return {
+            "cleaned": state["thr"] if (state["thr"] is not None and np.isfinite(state["thr"])) else None,
+            "original": state["orig_thr"] if (state["orig_thr"] is not None and np.isfinite(state["orig_thr"])) else None,
+            "min_reject": state["req_thr"] if (state["req_thr"] is not None and np.isfinite(state["req_thr"])) else None
+        }
+
+    def current_color_settings():
+        return {
+            "thr_clean": window["-COLOR-CLEAN-"].get() or "C1",
+            "thr_orig":  window["-COLOR-ORIG-"].get()  or "C4",
+            "thr_min":   window["-COLOR-MINREJ-"].get() or "C6",
+            "pts_orig":  window["-COLOR-PTS-ORIG-"].get() or "C2",
+            "pts_removed": window["-COLOR-PTS-REM-"].get() or "C3",
+            "pts_cleaned": window["-COLOR-PTS-CLEAN-"].get() or "C0",
+            "fit_line_clean":  window["-COLOR-FIT-"].get() or "C0",
+            "fit_line_orig":   window["-COLOR-FIT-ORIG-"].get() or "C5",
+            "ml_flag":   window["-COLOR-ML-"].get() or "C8",
+        }
+
+    def redraw_from_active_tab():
+        """タブ選択に応じて再描画（計算はしない）"""
+        selected = window["-TABGRP-"].get()
+        show_ml = window["-SHOW-ML-PTS-"].get()
+        thr_vals = current_thr_values()
+        colors = current_color_settings()
+        data = {"logs_orig": state["logs_orig"],
+                "removed_values": state["removed_values"],
+                "cleaned_logs": state["cleaned_logs"],
+                "ml_flag_indices": state["ml_flags_indices"]}
+        show_cleaned = (state["mode"] != "none")
+        if selected == "-TAB-QQ-":
+            draw_plot("qq", ax, data, TEXTS[lang], thr_vals, colors,
+                      show_ml_points=show_ml, show_cleaned=show_cleaned)
+        elif selected == "-TAB-HIST-":
+            draw_plot("hist", ax, data, TEXTS[lang], thr_vals, colors,
+                      show_ml_points=show_ml, show_cleaned=show_cleaned)
+        else:
+            draw_plot("cdf", ax, data, TEXTS[lang], thr_vals, colors,
+                      show_ml_points=show_ml, show_cleaned=show_cleaned)
+
+★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def _update_header_from_result(res, tail_pct, alpha, incl_zero):
+        """数値系ラベルを更新（共通化：run_once と品名ビュー共用）"""
+        window["-JUDG-"].update(TEXTS[lang]["OK"] if res["overall_ok"] else TEXTS[lang]["NG"])
+        scale_txt = "（百分率→換算済）" if res["scale"]=="percent" else ""
+        msgs = " / ".join(res["messages"]) if res["messages"] else ""
+        summary = f"総ロット: {res['n_total']} / 不良>0: {res['n_pos']} {scale_txt} ｜ σ={STD_MODE}"
+        if incl_zero:
+            summary += " ｜ 0%込みA補正"
+        if res.get("a_over_100", False):
+            summary += " ｜ " + TEXTS[lang]["NOTE_A100"]
+        if msgs: summary += " ｜ " + msgs
+        window["-SUMMARY-"].update(summary)
+        window["-EFFPCT-"].update(f"{res.get('effective_tail_pct', tail_pct):.4f}%")
+
+        W=res["cleaned"]["W"]; p=res["cleaned"]["p"]; thr=res["cleaned"]["thr"]
+        window["-W-"].update(f"{W:.4f}" if np.isfinite(W) else "-")
+        window["-P-"].update(f"{p:.4g}" if np.isfinite(p) else "-")
+        window["-THRESH-"].update(f"{thr:.6f}（= {thr*100:.3f}%）" if np.isfinite(thr) else "-")
+
+        removed = res["cleaned"]["removed_values"]
+        window["-REMCOUNT-"].update(str(len(removed)))
+        window["-REMSTOP-"].update(res["cleaned"]["stop_reason"] or "-")
+        window["-REMVALUES-"].update(", ".join([f"{v:.6f}" for v in removed[:10]]) if removed else "-")
+
+        orig_thr = res["outlier_check"]["orig_thr"]
+        window["-ORIGTHR-"].update(f"{orig_thr:.6f}（= {orig_thr*100:.3f}%）" if np.isfinite(orig_thr) else "-")
+        missed = res["outlier_check"]["missed_outliers"] or []
+        window["-MISSED-"].update(str(len(missed)))
+        req_thr = res["outlier_check"]["required_thr"]
+        window["-REQTHR-"].update(f"{req_thr:.6f}（= {req_thr*100:.3f}%）" if (req_thr is not None) else "-")
+        req_tail = res["outlier_check"]["required_tail_pct"]
+        window["-REQTAIL-"].update(f"{req_tail:.4f}%" if (req_tail is not None) else "-")
+
+        # コピー用の実値を保持
+        state["thr"]=thr if np.isfinite(thr) else None
+        state["orig_thr"]=orig_thr if np.isfinite(orig_thr) else None
+        state["req_thr"]=req_thr if (req_thr is not None) else None
+
+        # プロット用ログ/フラグ
+        state["logs_orig"]=res["orig"]["logs"] if res["orig"]["logs"].size else np.array([])
+        state["cleaned_logs"]=res["cleaned"]["logs"] if res["cleaned"]["logs"].size else np.array([])
+        state["removed_values"]=removed
+
+    def _recompute_and_redraw_for_data(rates):
+        """品名ビュー用：与えられた rates で計算→UI更新→再描画（入力欄は触らない）"""
+        # 現在のUI設定を拾う
+        global STD_MODE
+        STD_MODE = "sample" if window["-STD-S-"].get() else "population"
+        try: maxrem = float(window["-MAXREM-"].get())
+        except: maxrem = DEFAULT_MAX_REMOVE_FRAC
+        maxrem = max(0.0, min(0.9, maxrem))
+        try: tail_pct=float(window["-PERC-"].get() or "5")
+        except: tail_pct=5.0
+        tail_pct = max(0.01, min(50.0, tail_pct))
+        try: alpha=float(window["-ALPHA-"].get() or "0.05")
+        except: alpha=0.05
+        alpha = max(1e-6, min(0.5, alpha))
+        incl_zero = window["-INCLZERO-PCT-"].get()
+
+        if window["-MODE-SEQ-"].get():
+            mode="sequential"
+        elif window["-MODE-ML-"].get():
+            mode="ml"
+        else:
+            mode="none"
+        state["mode"] = mode
+
+        try:
+            ml_thr = float(window["-MODE-ML-THR-"].get() or "0.5")
+        except:
+            ml_thr = 0.5
+        ml_thr = max(0.0, min(1.0, ml_thr))
+        state["ml_threshold"]=ml_thr
+        show_ml = window["-SHOW-ML-PTS-"].get()
+
+        # 計算
+        res = compute_all_with_mode(
+            rates, tail_pct, alpha,
+            include_zero_in_overall=incl_zero,
+            mode=mode, ml_artifact=state["ml_artifact"], ml_threshold=ml_thr,
+            max_remove_frac=maxrem, return_ml_flags=True,
+            texts=TEXTS[lang]
+        )
+        # 見出し/数値
+        _update_header_from_result(res, tail_pct, alpha, incl_zero)
+        # MLフラグ（表示切替用）
+        state["ml_flags_indices"]=res.get("ml_flags_indices", set()) if show_ml else set()
+        # 再描画
+        redraw_from_active_tab()
+
+    def _show_batch_item(idx):
+        """names[idx] のデータを計算表示し、ビューバーを更新"""
+        bv = state["batch_view"]
+        n = len(bv["names"])
+        if n == 0:  # そもそも無効
+            window["-BVIEW-NOW-"].update("0 / 0")
+            window["-BVIEW-NAME-"].update("")
+            return
+        idx = (idx + n) % n
+        bv["idx"] = idx
+        name = bv["names"][idx]
+        rates = bv["data_by_name"].get(name, [])
+        window["-BVIEW-NOW-"].update(f"{idx+1} / {n}")
+        window["-BVIEW-NAME-"].update(name)
+        _recompute_and_redraw_for_data(rates)
+
+    # ---- 計算1回分（通常モード） ------------------------------------------------
+    def run_once(values):
+        global STD_MODE
+        # σの定義: STDEV.S / STDEV.P
+        STD_MODE = "sample" if values.get("-STD-S-", True) else "population"
+        # 逐次除外の上限割合
+        try:
+            maxrem = float(values.get("-MAXREM-", f"{DEFAULT_MAX_REMOVE_FRAC}"))
+        except:
+            maxrem = DEFAULT_MAX_REMOVE_FRAC
+        maxrem = max(0.0, min(0.9, maxrem))
+
+        # 入力データ：優先順は「CSV選択+列指定」→「手入力」
+        nums = []
+        df = state["df_loaded"]
+        rate_col = values.get("-COL-RATE-")
+        if df is not None and rate_col and rate_col in list(df.columns):
+            s = pd.to_numeric(df[rate_col], errors="coerce").dropna()
+            nums = s.tolist()
+        else:
+            nums = parse_text_numbers(values.get("-TEXT-",""))
+        state["last_numbers"] = nums
+
+        # データなし
+        if not nums:
+            window["-JUDG-"].update(TEXTS[lang]["NG"]+"（"+TEXTS[lang]["ML_INFO_NODATA"]+"）")
+            for k in ["-SUMMARY-","-W-","-P-","-THRESH-","-REMCOUNT-","-REMSTOP-","-REMVALUES-",
+                      "-ORIGTHR-","-MISSED-","-REQTHR-","-REQTAIL-","-EFFPCT-"]:
+                window[k].update("")
+            ax.clear(); ax.set_title(TEXTS[lang]["PLOT_TITLE_NO_DATA"]); canvas.draw()
+            state.update({"thr":None,"req_thr":None,"orig_thr":None,
+                          "logs_orig":np.array([]),"cleaned_logs":np.array([]),
+                          "removed_values":[], "ml_flags_indices": set()})
+            return
+
+        # パラメタ
+        try: tail_pct=float(values.get("-PERC-","5"))
+        except: tail_pct=5.0
+        tail_pct = max(0.01, min(50.0, tail_pct))
+        try: alpha=float(values.get("-ALPHA-","0.05"))
+        except: alpha=0.05
+        alpha = max(1e-6, min(0.5, alpha))
+        incl_zero = values.get("-INCLZERO-PCT-", False)
+
+        # 外れ値モード
+        if values.get("-MODE-SEQ-"):
+            mode="sequential"
+        elif values.get("-MODE-ML-"):
+            mode="ml"
+        else:
+            mode="none"
+        state["mode"] = mode
+
+        # MLしきい値
+        try:
+            ml_thr = float(values.get("-MODE-ML-THR-","0.5"))
+        except:
+            ml_thr = 0.5
+        ml_thr = max(0.0, min(1.0, ml_thr))
+        state["ml_threshold"]=ml_thr
+        show_ml = values.get("-SHOW-ML-PTS-", True)
+
+        # 計算
+        res = compute_all_with_mode(
+            nums, tail_pct, alpha,
+            include_zero_in_overall=incl_zero,
+            mode=mode, ml_artifact=state["ml_artifact"], ml_threshold=ml_thr,
+            max_remove_frac=maxrem, return_ml_flags=True,
+            texts=TEXTS[lang]
+        )
+
+        # 表示
+        _update_header_from_result(res, tail_pct, alpha, incl_zero)
+        state["ml_flags_indices"]=res.get("ml_flags_indices", set()) if show_ml else set()
+        # 再描画
+        redraw_from_active_tab()
+
+    # ===== イベントループ ========================================================
+    while True:
+        ev, vals = window.read()
+        if ev in (sg.WIN_CLOSED, "Exit"):
+            break
+
+        elif ev == "-READCSV-":
+            # CSVを読み、列名コンボを埋める（有効化）
+            path=vals.get("-CSVPATH-","").strip()
+            if not path:
+                sg.popup(TEXTS[lang]["POP_CSV_SEL"]); continue
+            try:
+                df = read_csv_df(path)
+                state["df_loaded"] = df
+                cols = list(df.columns)
+                window["-COL-RATE-"].update(values=cols, value=(cols[1] if len(cols)>=2 else (cols[0] if cols else "")), disabled=False)
+                window["-COL-KEY-"].update(values=cols, value=(cols[0] if cols else ""), disabled=False)
+                # プレビューをテキスト窓に（最大PREVIEW_MAX）
+                rate_col = window["-COL-RATE-"].get()
+                if rate_col and rate_col in df.columns:
+                    s = pd.to_numeric(df[rate_col], errors="coerce").dropna()
+                    nums = s.tolist()
+                else:
+                    nums = []
+                window["-TEXT-"].update(" ".join(map(str, nums[:PREVIEW_MAX])))
+            except Exception as e:
+                sg.popup_error(TEXTS[lang]["POP_CSV_ERR"] + str(e))
+
+        elif ev == "-RUN-":
+            run_once(vals)
+
+        elif ev == "-CLEAR-":
+            # 表示テキストを全部クリア
+            for k in ["-TEXT-","-CSVPATH-","-JUDG-","-SUMMARY-","-W-","-P-","-THRESH-",
+                      "-REMCOUNT-","-REMSTOP-","-REMVALUES-","-ORIGTHR-","-MISSED-","-REQTHR-","-REQTAIL-","-EFFPCT-"]:
+                window[k].update("")
+            # CSV関連を完全リセット：内部DF・列セレクタ・プレビュー
+            state["df_loaded"] = None
+            state["last_numbers"] = []
+            window["-COL-RATE-"].update(values=[], value="", disabled=True)
+            window["-COL-KEY-"].update(values=[], value="", disabled=True)
+            # ビューアも無効化
+            state["batch_view"] = {"enabled": False, "names": [], "data_by_name": {}, "idx": 0}
+            window["-BVIEW-NOW-"].update("0 / 0")
+            window["-BVIEW-NAME-"].update("")
+            for k in ("-BVIEW-PREV-","-BVIEW-NEXT-","-BVIEW-PICK-"):
+                window[k].update(disabled=True)
+            # グラフ初期化
+            ax.clear()
+            ax.set_title(TEXTS[lang]["PLOT_TITLE_NO_DATA"])
+            canvas.draw()
+            # 計算状態も初期化
+            state.update({
+                "thr": None, "req_thr": None, "orig_thr": None,
+                "logs_orig": np.array([]), "cleaned_logs": np.array([]),
+                "removed_values": [], "ml_flags_indices": set(), "mode": "none"
+            })
+
+        elif ev == "-LANG-JA-":
+            lang="ja"; set_language(window, lang); redraw_from_active_tab()
+        elif ev == "-LANG-ZH-":
+            lang="zh"; set_language(window, lang); redraw_from_active_tab()
+
+        elif ev in ("-COLOR-CLEAN-", "-COLOR-ORIG-", "-COLOR-MINREJ-",
+                    "-COLOR-PTS-ORIG-", "-COLOR-PTS-REM-", "-COLOR-PTS-CLEAN-",
+                    "-COLOR-FIT-", "-COLOR-FIT-ORIG-", "-COLOR-ML-"):
+            # ラベルを (C*) 付きで更新 → すぐ再描画
+            window["-COLOR-CLEAN-LBL-"].update(color_code_label("COLOR_CLEAN", window["-COLOR-CLEAN-"].get() or "C1"))
+            window["-COLOR-ORIG-LBL-"].update(color_code_label("COLOR_ORIG", window["-COLOR-ORIG-"].get() or "C4"))
+            window["-COLOR-MINREJ-LBL-"].update(color_code_label("COLOR_MINREJ", window["-COLOR-MINREJ-"].get() or "C6"))
+            window["-COLOR-PTS-ORIG-LBL-"].update(color_code_label("COLOR_ORIG_PTS", window["-COLOR-PTS-ORIG-"].get() or "C2"))
+            window["-COLOR-PTS-REM-LBL-"].update(color_code_label("COLOR_REM_PTS", window["-COLOR-PTS-REM-"].get() or "C3"))
+            window["-COLOR-PTS-CLEAN-LBL-"].update(color_code_label("COLOR_CLEAN_PTS", window["-COLOR-PTS-CLEAN-"].get() or "C0"))
+            window["-COLOR-FIT-LBL-"].update(color_code_label("COLOR_FIT_LINE", window["-COLOR-FIT-"].get() or "C0"))
+            window["-COLOR-FIT-ORIG-LBL-"].update(color_code_label("COLOR_FIT_LINE_ORIG", window["-COLOR-FIT-ORIG-"].get() or "C5"))
+            window["-COLOR-ML-LBL-"].update(color_code_label("COLOR_ML_FLAG", window["-COLOR-ML-"].get() or "C8"))
+            redraw_from_active_tab()
+
+        elif ev == "-TABGRP-":
+            redraw_from_active_tab()
+
+        elif ev == "-BATCH-RUN-":
+            try:
+                df = state["df_loaded"]
+                if df is None:
+                    sg.popup_error(TEXTS[lang]["POP_CSV_SEL"]); continue
+                rate_col = vals.get("-COL-RATE-")
+                key_col  = vals.get("-COL-KEY-")
+                if (not rate_col) or (not key_col):
+                    sg.popup_error(TEXTS[lang]["ERR_SELECT_COLUMNS"]); continue
+
+                try: tail_pct=max(0.01, min(50.0, float(vals.get("-PERC-","5"))))
+                except: tail_pct=5.0
+                try: alpha=max(1e-6, min(0.5, float(vals.get("-ALPHA-","0.05"))))
+                except: alpha=0.05
+                incl_zero = vals.get("-INCLZERO-PCT-", False)
+                mode = "sequential" if vals.get("-MODE-SEQ-") else ("ml" if vals.get("-MODE-ML-") else "none")
+                try: ml_thr = max(0.0, min(1.0, float(vals.get("-MODE-ML-THR-","0.5"))))
+                except: ml_thr = 0.5
+                std_mode_label = "sample" if vals.get("-STD-S-", True) else "population"
+                try:
+                    maxrem = float(vals.get("-MAXREM-", f"{DEFAULT_MAX_REMOVE_FRAC}"))
+                except:
+                    maxrem = DEFAULT_MAX_REMOVE_FRAC
+                maxrem = max(0.0, min(0.9, maxrem))
+
+                # 集計CSVの作成
+                out_df = batch_from_dataframe(
+                    df, key_col, rate_col, tail_pct, alpha,
+                    include_zero_in_overall=incl_zero,
+                    mode=mode,
+                    ml_artifact=state["ml_artifact"],
+                    ml_threshold=ml_thr,
+                    max_remove_frac=maxrem,
+                    std_mode_label=std_mode_label,
+                    texts=TEXTS[lang]
+                )
+
+                if out_df.empty:
+                    sg.popup_no_titlebar(TEXTS[lang]["BATCH_EMPTY"])
+                else:
+                    # 保存ダイアログ
+                    sg.popup_no_titlebar(TEXTS[lang]["BATCH_DONE"].format(rows=len(out_df)))
+                    save_path = sg.popup_get_file(TEXTS[lang]["DIALOG_SAVE_CSV"], save_as=True,
+                                                  file_types=(("CSV","*.csv"),), default_extension=".csv")
+                    if save_path:
+                        out_df.to_csv(save_path, index=False, encoding="utf-8-sig")
+
+                    # ====== 品名ビューアにデータ注入（新規） ======
+                    tmp = pd.DataFrame({
+                        "key": df[key_col].astype(str),
+                        "rate": pd.to_numeric(df[rate_col], errors="coerce")
+                    }).dropna(subset=["rate"])
+                    data_by_name = {k: g["rate"].tolist() for k, g in tmp.groupby("key")}
+                    names = sorted(list(data_by_name.keys()))
+                    state["batch_view"] = {
+                        "enabled": True,
+                        "names": names,
+                        "data_by_name": data_by_name,
+                        "idx": 0
+                    }
+                    # ビューバーを有効化
+                    for k in ("-BVIEW-PREV-","-BVIEW-NEXT-","-BVIEW-PICK-"):
+                        window[k].update(disabled=(len(names)==0))
+                    # 先頭品目を表示
+                    if len(names)>0:
+                        _show_batch_item(0)
+                    else:
+                        window["-BVIEW-NOW-"].update("0 / 0")
+                        window["-BVIEW-NAME-"].update("")
+
+            except Exception as e:
+                sg.popup_error(TEXTS[lang]["BATCH_ERR"]+str(e))
+
+        # --- しきい値系のコピー（辞書メッセージ適用） ---
+        elif ev == "-COPY-THR-":
+            val = state.get("thr", None)
+            if val is None or not np.isfinite(val):
+                sg.popup_no_titlebar(TEXTS[lang]["MSG_NO_VALUE"])
+            else:
+                sg.clipboard_set(f"{val:.10f} ({val*100:.6f}%)")
+                sg.popup_no_titlebar(TEXTS[lang]["COPIED"])
+        elif ev == "-COPY-REQ-":
+            val = state.get("req_thr", None)
+            if val is None or not np.isfinite(val):
+                sg.popup_no_titlebar(TEXTS[lang]["MSG_NO_VALUE"])
+            else:
+                sg.clipboard_set(f"{val:.10f} ({val*100:.6f}%)")
+                sg.popup_no_titlebar(TEXTS[lang]["COPIED"])
+        elif ev == "-COPY-ORIG-":
+            val = state.get("orig_thr", None)
+            if val is None or not np.isfinite(val):
+                sg.popup_no_titlebar(TEXTS[lang]["MSG_NO_VALUE"])
+            else:
+                sg.clipboard_set(f"{val:.10f} ({val*100:.6f}%)")
+                sg.popup_no_titlebar(TEXTS[lang]["COPIED"])
+
+        # --- ML：学習／保存／読込／スコアリング ---
+        elif ev == "-ML-TRAIN-RUN-":
+            train_csv = vals.get("-ML-TRAIN-PATH-","").strip()
+            if not train_csv:
+                sg.popup_error(TEXTS[lang]["POP_CSV_SEL"]); continue
+            try:
+                artifact = train_ml_from_csv(train_csv, texts=TEXTS[lang])
+                state["ml_artifact"] = artifact
+                window["-ML-INFO-"].update(TEXTS[lang]["ML_INFO_READY"])
+            except Exception as e:
+                state["ml_artifact"]=None
+                sg.popup_error(TEXTS[lang]["ML_INFO_FAIL"]+str(e))
+
+        elif ev == "-ML-SAVE-":
+            if state["ml_artifact"] is None:
+                sg.popup_error(TEXTS[lang]["ERR_NO_MODEL"]); continue
+            path = sg.popup_get_file(TEXTS[lang]["ML_SAVE"], save_as=True, file_types=(("PKL","*.pkl"),), default_extension=".pkl")
+            if path:
+                try:
+                    with open(path,"wb") as f: pickle.dump(state["ml_artifact"], f)
+                except Exception as e:
+                    sg.popup_error(TEXTS[lang]["ML_INFO_FAIL"]+str(e))
+
+        elif ev == "-ML-LOAD-":
+            path=vals.get("-ML-MODEL-PATH-","").strip()
+            if not path:
+                path = sg.popup_get_file(TEXTS[lang]["ML_LOAD"], file_types=(("PKL","*.pkl"),))
+            if not path:
+                continue
+            try:
+                with open(path,"rb") as f:
+                    state["ml_artifact"]=pickle.load(f)
+                window["-ML-INFO-"].update(TEXTS[lang]["ML_INFO_READY"])
+            except Exception as e:
+                state["ml_artifact"]=None
+                window["-ML-INFO-"].update(TEXTS[lang]["ML_INFO_FAIL"]+str(e))
+
+        elif ev == "-ML-SCORE-":
+            if state["ml_artifact"] is None:
+                sg.popup_error(TEXTS[lang]["ERR_NO_MODEL"]); continue
+            data = state["last_numbers"]
+            if (not data) and (state["df_loaded"] is not None):
+                df=state["df_loaded"]; rate_col = vals.get("-COL-RATE-")
+                if rate_col and rate_col in df.columns:
+                    s = pd.to_numeric(df[rate_col], errors="coerce").dropna()
+                    data = s.tolist()
+            if not data:
+                window["-ML-INFO-"].update(TEXTS[lang]["ML_INFO_NODATA"]); continue
+            df_tmp = pd.DataFrame({"Name":["SINGLE"]*len(data), "Rate":data})
+            X, _ = _ml_features_from_df(df_tmp[['Name','Rate']].copy())
+            model = state["ml_artifact"].get("model", state["ml_artifact"])
+            proba = model.predict_proba(X)[:,1]
+            thr = state.get("ml_threshold", 0.5)
+            pred = (proba >= thr).astype(int)
+            window["-ML-INFO-"].update(TEXTS[lang]["ML_INFO_RESULT"].format(n=int(pred.sum()), thr=thr))
+
+        # --- 図コピー/保存（ボタンを出した時用） ---
+        elif ev == "-COPY-PLOT-":
+            copy_figure_to_clipboard_and_optionally_save(state["fig"], state["canvas"], window, TEXTS[lang], ask_save=True)
+
+        # --- 品名ビューア（新規） ---
+        elif ev == "-BVIEW-PREV-":
+            if state["batch_view"]["enabled"]:
+                _show_batch_item(state["batch_view"]["idx"]-1)
+            else:
+                sg.popup_no_titlebar(TEXTS[lang]["BVIEW_NO_BATCH"])
+        elif ev == "-BVIEW-NEXT-":
+            if state["batch_view"]["enabled"]:
+                _show_batch_item(state["batch_view"]["idx"]+1)
+            else:
+                sg.popup_no_titlebar(TEXTS[lang]["BVIEW_NO_BATCH"])
+        elif ev == "-BVIEW-PICK-":
+            if state["batch_view"]["enabled"]:
+                names = state["batch_view"]["names"]
+                if not names:
+                    sg.popup_no_titlebar(TEXTS[lang]["BVIEW_NO_BATCH"])
+                else:
+                    # 名前一覧から選択（簡易：Comboのポップ）
+                    choice = sg.popup_get_text(TEXTS[lang]["BVIEW_PICK_PROMPT"]+"\n"+"\n".join(names))
+                    if choice and choice in state["batch_view"]["data_by_name"]:
+                        idx = names.index(choice)
+                        _show_batch_item(idx)
+            else:
+                sg.popup_no_titlebar(TEXTS[lang]["BVIEW_NO_BATCH"])
+
+    window.close()
+
+if __name__ == "__main__":
+    main()
+
 
 
 ■1■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
