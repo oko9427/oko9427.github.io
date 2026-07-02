@@ -76,7 +76,7 @@ def _bundled_font_path(filename):
 # ja: NotoSansCJKjp, zh-cn: NotoSansCJKsc を最後に差し込む
 LANG_BUNDLED_FALLBACK = {
     "ja": _bundled_font_path("NotoSansJP-VF.ttf"),
-    "zh": _bundled_font_path("NotoSansCJKsc-Regular.otf"),
+    "zh-cn": _bundled_font_path("NotoSansCJKsc-Regular.otf"),
 }
 
 def select_font_for_lang(lang: str) -> str:
@@ -104,7 +104,7 @@ def select_font_for_lang(lang: str) -> str:
     print(f"[Font] {lang} 用フォント未発見。デフォルト使用。")
     return "sans-serif"
 
-# 初期言語に合わせて一度セット（例：ja / zh）
+# 初期言語に合わせて一度セット（例：ja / zh-cn）
 CURRENT_LANG = "ja"  # ← 起動時の既定を合わせて
 SELECTED_FONT = select_font_for_lang(CURRENT_LANG)
 
@@ -156,7 +156,7 @@ enable_dpi_awareness()
 
 # ====== i18n（日本語/中文キー。中身は当面どちらも日本語） =========================
 TEXTS = {
-    "ja": = {
+    "ja": {
         # タイトル
         "TITLE": f"不良率 上位%しきい値ツール（外れ値対応＋ML補助） ver{APP_VERSION}",
         # 入力
@@ -279,8 +279,8 @@ TEXTS = {
         # 注意書き
         "CAUTIONARY_NOTE": "二次配布禁止・UHV限定で使用可能",
     },
-    "zh-cn": = {
-        # 标题与概要
+    "zh-cn": {
+        # タイトル
         "TITLE": f"不良率 上位%阈值工具（含异常值处理＋机器学习辅助） ver{APP_VERSION}",
         # 入力
         "INPUT_LABEL": "不良率数据：手动输入或读取CSV（选择要使用的列）",
@@ -388,19 +388,19 @@ TEXTS = {
         "BVIEW_PICK_PROMPT": "请选择品名",
         "BVIEW_NO_BATCH": "没有批量处理结果",
         # 品名ビューア（追加）
-        "VIEW_SEARCH": "搜索",
-        "VIEW_DECIDE": "确定",
-        "VIEW_CANCEL": "取消",
-        "VIEW_NO_MATCH": "无对应项目",
+        "BVIEW_SEARCH": "搜索",
+        "BVIEW_OK": "确定",
+        "BVIEW_CANCEL": "取消",
+        "BVIEW_NO_MATCH": "无对应项目",
         # 手動追加分
-        "VIEW_BATCH": "批量处理",
-        "VIEW_CONFIG": "设置",
-        "VIEW_NORMALITY": "正态性结果",
-        "VIEW_THRESH": "阈值线",
-        "VIEW_POINTS": "散点",
-        "VIEW_FITLINE": "拟合线",
+        "FRAME_BATCH_HDR": "批量处理",
+        "FRAME_SETTINGS_HDR": "设置",
+        "FRAME_RESULT_HDR": "正态性结果",
+        "COLOR_LINES_HDR": "阈值线",
+        "COLOR_POINTS_HDR": "散点",
+        "COLOR_FITLINE_HDR": "拟合线",
         # 注意書き
-        "LICENSE_NOTICE": "禁止二次分发・仅限UHV部门内部使用",
+        "CAUTIONARY_NOTE": "禁止二次分发・仅限UHV部门内部使用",
     }
 }
 
@@ -1069,14 +1069,14 @@ def main():
 
             [sg.Frame(t["COLOR_HDR"], [
                 color_legend_row,
-                [sg.Text(t["COLOR_LINE_HDR"], key="-COLOR-LINES-"),
+                [sg.Text(t["COLOR_LINES_HDR"], key="-COLOR-LINES-"),
                  sg.Text(color_code_label("COLOR_ORIG","C4"), key="-COLOR-ORIG-LBL-"),
                  sg.Combo(COLOR_CHOICES, default_value="C4", key="-COLOR-ORIG-", readonly=True, enable_events=True),
                  sg.Text(color_code_label("COLOR_CLEAN","C1"), key="-COLOR-CLEAN-LBL-"),
                  sg.Combo(COLOR_CHOICES, default_value="C1", key="-COLOR-CLEAN-", readonly=True, enable_events=True),
                  sg.Text(color_code_label("COLOR_MINREJ","C6"), key="-COLOR-MINREJ-LBL-"),
                  sg.Combo(COLOR_CHOICES, default_value="C6", key="-COLOR-MINREJ-", readonly=True, enable_events=True)],
-                [sg.Text(t["COLOR_POINTS_HDR"], key="-COLOR-POINTS-"),
+                [sg.Text(t["COLOR_POINTS_HDR"], key="-COLOR_POINTS-"),
                  sg.Text(color_code_label("COLOR_ORIG_PTS","C2"), key="-COLOR-PTS-ORIG-LBL-"),
                  sg.Combo(COLOR_CHOICES, default_value="C2", key="-COLOR-PTS-ORIG-", readonly=True, enable_events=True),
                  sg.Text(color_code_label("COLOR_CLEAN_PTS","C0"), key="-COLOR-PTS-CLEAN-LBL-"),
@@ -1085,7 +1085,7 @@ def main():
                  sg.Combo(COLOR_CHOICES, default_value="C3", key="-COLOR-PTS-REM-", readonly=True, enable_events=True),
                  sg.Text(color_code_label("COLOR_ML_FLAG","C8"), key="-COLOR-ML-LBL-"),
                  sg.Combo(COLOR_CHOICES, default_value="C8", key="-COLOR-ML-", readonly=True, enable_events=True)],
-                [sg.Text(t["COLOR_FITLINE_HDR"], key="-COLOR-FITLINES-"),
+                [sg.Text(t["COLOR_FITLINE_HDR"], key="-COLOR_FITLINE-"),
                  sg.Text(color_code_label("COLOR_FIT_LINE_ORIG","C2"), key="-COLOR-FIT-ORIG-LBL-"),
                  sg.Combo(COLOR_CHOICES, default_value="C2", key="-COLOR-FIT-ORIG-", readonly=True, enable_events=True),
                  sg.Text(color_code_label("COLOR_FIT_LINE","C0"), key="-COLOR-FIT-LBL-"),
@@ -1101,7 +1101,7 @@ def main():
 
 
     left_inner = [
-        [sg.Text(t["CAUTIONARY_NOTE"], key="-CAUTIONARY-NOTE-", text_color="#FFB000", background_color="2C2C2C")],
+        [sg.Text(t["CAUTIONARY_NOTE"], key="-CAUTIONARY-NOTE-", text_color="#FFB000", background_color="#2C2C2C")],
         [sg.Button(t["LANG_ZH"], key="-LANG-ZH-"), sg.Button(t["LANG_JA"], key="-LANG-JA-")],
         [sg.Text(t["INPUT_LABEL"], key="-LBL-INPUT-")],
         [sg.Multiline(size=(45,8), key="-TEXT-", tooltip="例: 0.01 0 0.5 0.02 ...（プレビュー用）")],
@@ -1258,20 +1258,74 @@ def main():
             draw_plot("cdf", ax, data, TEXTS[lang], thr_vals, colors,
                       show_ml_points=show_ml, show_cleaned=show_cleaned)
 
-★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
-
-
-
-
-
-
-
-
-
-
-
-
+    def set_language(window, lang):
+        t=TEXTS[lang]; window.TKroot.title(t["TITLE"])
+        mapping = [
+            ("-LBL-INPUT-","INPUT_LABEL"),("-CSVBTN-","CSV_BTN"),("-READCSV-","CSV_READ"),
+            ("-LBL-RATE-COL-","CSV_RATE_COL"),("-LBL-KEY-COL-","CSV_KEY_COL"),
+            ("-LBL-PERC-","PERC"),("-LBL-ALPHA-","ALPHA"),
+            ("-RUN-","RUN"),("-CLEAR-","CLEAR"),
+            ("-LANG-JA-","LANG_JA"),("-LANG-ZH-","LANG_ZH"),
+            ("-MODE-HDR-","MODE_HDR"),("-MODE-NONE-","MODE_NONE"),("-MODE-SEQ-","MODE_SEQ"),("-MODE-ML-","MODE_ML"),
+            ("-MODE-ML-THR-LBL-","MODE_ML_THR"),("-SHOW-ML-PTS-","SHOW_ML_PTS"),
+            ("-LBL-STD-","STD_MODE"),("-STD-S-","STD_SAMPLE"),("-STD-P-","STD_POP"),
+            ("-LBL-MAXREM-","MAX_REMOVE"),("-PLOT-HDR-","PLOT_HDR"),
+            ("-COLOR-HDR-","COLOR_HDR"),("-COLOR-LEGEND-LBL-","COLOR_LEGEND"),
+            ("-COLOR-CLEAN-LBL-","COLOR_CLEAN"),("-COLOR-ORIG-LBL-","COLOR_ORIG"),("-COLOR-MINREJ-LBL-","COLOR_MINREJ"),
+            ("-COLOR-PTS-ORIG-LBL-","COLOR_ORIG_PTS"),("-COLOR-PTS-REM-LBL-","COLOR_REM_PTS"),
+            ("-COLOR-PTS-CLEAN-LBL-","COLOR_CLEAN_PTS"),("-COLOR-FIT-LBL-","COLOR_FIT_LINE"),
+            ("-COLOR-FIT-ORIG-LBL-","COLOR_FIT_LINE_ORIG"),("-COLOR-ML-LBL-","COLOR_ML_FLAG"),
+            ("-LBL-JUDG-","JUDG"),("-LBL-SUMMARY-","SUMMARY"),("-LBL-W-","W"),("-LBL-P-","P"),
+            ("-LBL-THR-","THRESH"),("-NOTICE-","NOTICE_ZERO"),
+            ("-BATCH-HDR-","BATCH_HDR"),("-BATCH-RUN-","BATCH_RUN"),
+            ("-OUTLIER-HDR-","OUTLIER_HDR"),("-LBL-REMCOUNT-","REMCOUNT"),("-LBL-REMSTOP-","REMSTOP"),
+            ("-LBL-REMVALUES-","REMVALUES"),("-LBL-ORIGTHR-","ORIGTHR"),("-LBL-MISSED-","MISSED"),
+            ("-LBL-REQTHR-","REQTHR"),("-LBL-REQTAIL-","REQTAIL"),
+            ("-COPY-THR-","COPY_THR"),("-COPY-REQ-","COPY_REQ"),("-COPY-ORIG-","COPY_ORIG"),
+            ("-ML-HDR-","ML_HDR"),("-ML-TRAIN-LBL-","ML_TRAIN_CSV"),("-ML-TRAIN-BROWSE-","ML_TRAIN_BROWSE"),
+            ("-ML-TRAIN-RUN-","ML_TRAIN_RUN"),("-ML-MODEL-LBL-","ML_MODEL"),("-ML-BROWSE-","ML_BROWSE"),
+            ("-ML-LOAD-","ML_LOAD"),("-ML-SCORE-","ML_SCORE"),("-ML-SAVE-","ML_SAVE"),
+            ("-TAB-QQ-TITLE-","TAB_QQ"),("-TAB-HIST-TITLE-","TAB_HIST"),("-TAB-CDF-TITLE-","TAB_CDF"),
+            # ビューア
+            ("-BVIEW-HDR-","BVIEW_BAR_HDR"),("-BVIEW-NOW-LBL-","BVIEW_NOW"),("-BVIEW-PICK-","BVIEW_PICK"),
+            ("-COPY-PLOT-","COPY_PLOT"),  # ← 有効化したい時にコメントアウトを外す
+            # 手動追加
+            ("-BVIEW-HDR-", "BVIEW_BAR_HDR"),("-BVIEW-NOW-LBL-", "BVIEW_NOW"),("-BVIEW-PICK-", "BVIEW_PICK"),
+            ("-BVIEW-PICK-PROMPT-", "BVIEW_PICK_PROMPT"),("-BVIEW-SEARCH-", "BVIEW_SEARCH"),
+            ("-PICK-OK-", "BVIEW_OK"),("-PICK-CANCEL-", "BVIEW_CANCEL"),
+            ("-FRAME-BATCH-", "FRAME_BATCH_HDR"),("-FRAME-SETTINGS-", "FRAME_SETTINGS_HDR"),("-FRAME-RESULT-", "FRAME_RESULT_HDR"),
+            ("-COLOR_LINES-", "COLOR_LINES_HDR"),("-COLOR_POINTS-", "COLOR_POINTS_HDR"),("-COLOR_FITLINE-", "COLOR_FITLINE_HDR"),
+            ("-CAUTIONARY-NOTE-", "CAUTIONARY_NOTE"),
+            ("-STD-S-", "STD_SAMPLE"),("-STD-P-", "STD_POP"),
+            ("-INCLZERO-PCT-", "INCL_ZERO_PCT"),
+            ("-TAB-QQ-", "TAB_QQ"),("-TAB-HIST-", "TAB_HIST"),("-TAB-CDF-", "TAB_CDF"),
+            ("-LBL-EFFPCT-", "EFFPCT"),
+        ]
+        # for k,name in mapping:
+        #     if k in window.AllKeysDict:
+        #         window[k].update(t[name])
+        # 言語切り替えがうまくいかないので下記に変更
+        for k, name in mapping:
+            if k in window.AllKeysDict:
+                new_text = t[name]
+                # 要素の種類によって update() のキーワードが異なるので複数試す
+                try:
+                    window[k].update(text=new_text)
+                except Exception:
+                    try:
+                        window[k].update(title=new_text)
+                    except Exception:
+                        try:
+                            window[k].update(new_text)
+                        except Exception:
+                            pass
+        global CURRENT_LANG, UI_FONT_FAMILY
+        CURRENT_LANG = lang
+        UI_FONT_FAMILY = select_font_for_lang(lang)  # matplotlib側もここで切替済み
+        _apply_ui_font(window, UI_FONT_FAMILY, size=UI_FONT_SIZE)
+        redraw_from_active_tab()
+    set_language(window, lang)
 
     def _update_header_from_result(res, tail_pct, alpha, incl_zero):
         """数値系ラベルを更新（共通化：run_once と品名ビュー共用）"""
@@ -1378,6 +1432,74 @@ def main():
         window["-BVIEW-NOW-"].update(f"{idx+1} / {n}")
         window["-BVIEW-NAME-"].update(name)
         _recompute_and_redraw_for_data(rates)
+
+    def pick_name_modal(parent_window, names, texts):
+        """
+        親ウィンドウ中央にモーダルで出す品名選択ダイアログ。
+        - 検索ボックスで絞り込み
+        - OKで選択確定 / キャンセルでNone
+        """
+        if not names:
+            return None
+
+        # 親の位置/サイズから中央座標を計算し、画面内にクランプ
+        root = parent_window.TKroot
+        root.update_idletasks()
+        px = root.winfo_rootx()
+        py = root.winfo_rooty()
+        pw = root.winfo_width()
+        ph = root.winfo_height()
+        sw = root.winfo_screenwidth()
+        sh = root.winfo_screenheight()
+
+        win_w, win_h = 420, 420
+        cx = px + max(0, pw//2 - win_w//2)
+        cy = py + max(0, ph//2 - win_h//2)
+        cx = max(0, min(cx, sw - win_w))
+        cy = max(0, min(cy, sh - win_h))
+
+        # 初期値
+        filtered = list(names)
+
+        # レイアウト
+        layout = [
+            [sg.Text(texts["BVIEW_PICK_PROMPT"], key="-BVIEW-PICK-PROMPT-")],
+            [sg.Text(texts["BVIEW_SEARCH"], key="-BVIEW-SEARCH-"), sg.Input(key="-PICK-FLT-", enable_events=True, size=(28,1))],
+            [sg.Listbox(values=filtered, key="-PICK-LB-", size=(40,15), enable_events=True, select_mode=sg.LISTBOX_SELECT_MODE_SINGLE)],
+            [sg.Push(), sg.Button(texts["BVIEW_OK"], key="-PICK-OK-", bind_return_key=True),
+             sg.Button(texts["BVIEW_CANCEL"], key="-PICK-CANCEL-")]
+        ]
+
+        win = sg.Window("Picker", layout, modal=True, keep_on_top=True,
+            location=(cx, cy), finalize=True)
+
+        selected = None
+        while True:
+            ev, vals = win.read()
+            if ev in (sg.WIN_CLOSED, "-PICK-CANCEL-"):
+                selected = None
+                break
+            elif ev == "-PICK-FLT-":
+                kw = (vals["-PICK-FLT-"] or "").strip().lower()
+                if kw:
+                    filtered = [n for n in names if kw in n.lower()]
+                else:
+                    filtered = list(names)
+                win["-PICK-LB-"].update(filtered)
+                if not filtered:
+                    win["-PICK-LB-"].update([f"({texts['BVIEW_NO_MATCH']})"])
+            elif ev == "-PICK-LB-":
+                # クリックで選択ハイライトのみ。確定はOKで。
+                pass
+            elif ev == "-PICK-OK-":
+                vals_now = win["-PICK-LB-"].get_list_values()
+                sel = win["-PICK-LB-"].get()
+                if sel and sel[0] in vals_now and not sel[0].startswith("("):
+                    selected = sel[0]
+                    break
+        win.close()
+        return selected
+
 
     # ---- 計算1回分（通常モード） ------------------------------------------------
     def run_once(values):
@@ -1517,7 +1639,7 @@ def main():
         elif ev == "-LANG-JA-":
             lang="ja"; set_language(window, lang); redraw_from_active_tab()
         elif ev == "-LANG-ZH-":
-            lang="zh"; set_language(window, lang); redraw_from_active_tab()
+            lang="zh-cn"; set_language(window, lang); redraw_from_active_tab()
 
         elif ev in ("-COLOR-CLEAN-", "-COLOR-ORIG-", "-COLOR-MINREJ-",
                     "-COLOR-PTS-ORIG-", "-COLOR-PTS-REM-", "-COLOR-PTS-CLEAN-",
@@ -1711,7 +1833,7 @@ def main():
                     sg.popup_no_titlebar(TEXTS[lang]["BVIEW_NO_BATCH"])
                 else:
                     # 名前一覧から選択（簡易：Comboのポップ）
-                    choice = sg.popup_get_text(TEXTS[lang]["BVIEW_PICK_PROMPT"]+"\n"+"\n".join(names))
+                    choice = pick_name_modal(window, names, TEXTS[lang])
                     if choice and choice in state["batch_view"]["data_by_name"]:
                         idx = names.index(choice)
                         _show_batch_item(idx)
@@ -1722,6 +1844,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
