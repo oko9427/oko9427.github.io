@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>軽量ゲーム置き場</title>
+<style>
+body{display:flex;font-family:sans-serif;background-image:url("img/bg.png");background-repeat:repeat;margin:0;color:#111}
+#left{width:150px;flex:0 0 150px;padding:10px;border-right:1px solid #bbb;background:#fff8}
+#right{flex:1;min-width:0;padding:10px}
+.content{display:none}.active{display:block}li{cursor:pointer;margin:0 0 6px;text-decoration:underline}
+h2{margin:0 0 8px}.txt{white-space:pre-wrap;font:inherit;margin:0 0 1em}
+button{font:inherit;margin:2px;padding:6px 10px}.bar{margin:6px 0}.msg{font-weight:bold;min-height:1.3em}
+.win img{max-width:100%;height:auto;max-height:70vh;border:1px solid #999;background:#fff}
+canvas{border:1px solid #333;background:#fff;max-width:100%;touch-action:none}
+.board{display:grid;gap:2px;touch-action:manipulation;user-select:none}
+.cell{width:34px;height:34px;border:1px solid #999;background:#eee;display:flex;align-items:center;justify-content:center;font-weight:bold;box-sizing:border-box}
+.small .cell{width:28px;height:28px}.dark{background:#3a8b3a}.black{color:#000}.white{color:#fff;text-shadow:0 0 2px #000}.bad{color:#b00}.good{color:#060}
+#rvBoard{grid-template-columns:repeat(8,34px)}#gmBoard{grid-template-columns:repeat(11,28px)}#mmBoard{grid-template-columns:repeat(8,42px)}#msBoard{grid-template-columns:repeat(9,30px)}#rlBoard,#srBoard,#skBoard{grid-template-columns:repeat(10,32px)}
+#btWrap{display:flex;gap:18px;flex-wrap:wrap}.bt{grid-template-columns:repeat(6,32px)}
+.face{background:#ddd}.open{background:#fff}.hit{background:#f99}.miss{background:#ccf}.ship{background:#aaa}
+.pad{display:grid;grid-template-columns:repeat(3,44px);width:max-content;gap:2px;margin-top:8px}
+.pad button{height:40px;padding:0}
+
+#hbLog,#bjLog,#pkLog,#roLog{white-space:pre-wrap;border:1px solid #bbb;background:#fff;padding:6px;max-width:560px;min-height:2em}
+#hbCand{font-size:90%}.cards button{min-width:42px;height:58px;background:#fff;border:1px solid #555}.sel{background:#ff9!important}
+#pkHand button{min-width:42px;height:58px}.coin{font-weight:bold}
+.mmOpen{background:#ffe08a}.mmDone{background:#bfe6bf}.hlCards{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:8px 0}.hlCard{width:82px;height:116px;border:2px solid #777;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:bold}.hlBack{background:#eee;color:#333}.redCard{color:#c03}.blackCard{color:#111}.hlBtns button{min-width:90px}
+
+.hlCards{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin:8px 0}
+.hlPileLabel{font-size:12px;margin-bottom:4px}
+.hlCard{width:72px;height:96px;border:2px solid #444;background:#fff;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:bold;border-radius:6px;box-sizing:border-box}
+.hlBack{background:#f4f4f4}
+.hlBtns{margin:8px 0}
+.hlBtns button{min-width:90px}
+#hlBoardWrap{max-width:100%;overflow:auto;margin-top:8px}
+#hlBoard{display:grid;grid-template-columns:44px repeat(13,40px);gap:2px;width:max-content}
+.hlHead,.hlSuit,.hlRef{border:1px solid #999;min-height:30px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;font-size:13px}
+.hlHead,.hlSuit{background:#f0f0f0}
+.hlRef{background:#fff;font-weight:bold}
+.hlUsed{background:#d5d9de;color:#666}
+.hlCurrent{background:#ffe08a;border:2px solid #c5952b}
+.hlRed{color:#c03}
+.hlBlack{color:#111}
+#hlLog{white-space:pre-wrap;border:1px solid #bbb;background:#fff;padding:6px;max-width:720px;min-height:2em}
+
+@media(max-width:700px){
+ body{display:block}#left{width:auto;flex:none;border-right:0;border-bottom:1px solid #bbb}#left ul{display:flex;flex-wrap:wrap;gap:4px;padding-left:18px}
+ #right{padding:8px}.cell{width:30px;height:30px}.small .cell{width:25px;height:25px}
+ #rvBoard{grid-template-columns:repeat(8,30px)}#gmBoard{grid-template-columns:repeat(11,25px)}#mmBoard{grid-template-columns:repeat(8,38px)}#msBoard{grid-template-columns:repeat(9,28px)}#rlBoard,#srBoard,#skBoard{grid-template-columns:repeat(10,29px)}
+}
+
+.rogrid{display:grid;grid-template-columns:44px repeat(12,42px);grid-template-rows:repeat(5,34px);gap:2px;max-width:580px;margin:8px 0;overflow:auto}
+.rogrid button{margin:0;padding:4px 0;font-size:12px;min-width:0}
+.ro0{grid-row:1/4}.rodoz{grid-column:span 4}.roout{grid-column:span 2}
+.rored{background:#d33;color:#fff}.roblack{background:#222;color:#fff}.rogreen{background:#198754;color:#fff}
+.roctl button{min-width:64px}
+
+#snCanvas{background:#eef}.snakeHead{background:#f00}
+</style>
+</head>
+<body>
+<div id="left"><ul>
+<li onclick="show('A')">ブロック崩し</li>
+<li onclick="show('B')">オセロ</li>
+<li onclick="show('C')">五目ならべ</li>
+<li onclick="show('D')">神経衰弱</li>
+<li onclick="show('E')">マインスイーパー</li>
+<li onclick="show('F')">海戦ゲーム</li>
+<li onclick="show('G')">倉庫番</li>
+<li onclick="show('H')">インベーダー</li>
+<li onclick="show('I')">Hit &amp; Blow</li>
+<li onclick="show('J')">テトリス</li>
+<li onclick="show('K')">ブラックジャック</li>
+<li onclick="show('L')">4人制ポーカー</li>
+<li onclick="show('M')">クイックス</li>
+<li onclick="show('N')">ルーレット</li>
+<li onclick="show('O')">スネーク</li>
+<li onclick="show('P')">High &amp; Low</li>
+</ul></div>
+
+<div id="right">
+<div id="A" class="content active"><h2>ブロック崩し</h2><pre class="txt">PC: マウス移動 / ←→　スマホ: 画面をなぞる。全部壊せば勝ち。</pre><canvas id="brCanvas" width="420" height="360"></canvas><div class="bar"><button onclick="brInit()">最初から</button></div><div id="brMsg" class="msg"></div><div id="win-A" class="win"></div></div>
+<div id="B" class="content"><h2>オセロ</h2><pre class="txt">黒がご主人様。白は簡単AI。角を好む程度には小賢しいわ。</pre><div class="bar"><button onclick="rvInit()">最初から</button></div><div id="rvMsg" class="msg"></div><div id="rvBoard" class="board"></div><div id="win-B" class="win"></div></div>
+<div id="C" class="content"><h2>五目ならべ</h2><pre class="txt">黒がご主人様。白AIは四連・三連・両取りを評価してくる。前よりかなり小賢しい。</pre><div class="bar"><button onclick="gmInit()">最初から</button></div><div id="gmMsg" class="msg"></div><div id="gmBoard" class="board small"></div><div id="win-C" class="win"></div></div>
+<div id="D" class="content"><h2>神経衰弱</h2><pre class="txt">ご主人様とCPUの交互対戦。8×8の64枚。CPUは一度めくったカードだけ全部記憶する。未公開の札を透視するインチキは封じたわ。</pre><div class="bar"><button onclick="mmInit()">最初から</button></div><div id="mmMsg" class="msg"></div><div id="mmBoard" class="board"></div><div id="win-D" class="win"></div></div>
+<div id="E" class="content"><h2>マインスイーパー</h2><pre class="txt">通常クリック/タップで開く。旗はモード切替で置く。地雷以外を開けば勝ち。</pre><div class="bar"><button onclick="msFlag=!msFlag;msDraw()">旗モード切替</button><button onclick="msInit()">最初から</button></div><div id="msMsg" class="msg"></div><div id="msBoard" class="board small"></div><div id="win-E" class="win"></div></div>
+<div id="F" class="content"><h2>海戦ゲーム</h2><pre class="txt">右の敵海域を撃つ。CPUも撃ってくる。全艦撃沈で勝ち。</pre><div class="bar"><button onclick="btInit()">最初から</button></div><div id="btMsg" class="msg"></div><div id="btWrap"><div><b>自軍</b><div id="btMe" class="board bt"></div></div><div><b>敵軍</b><div id="btEnemy" class="board bt"></div></div></div><div id="win-F" class="win"></div></div>
+<div id="G" class="content"><h2>倉庫番</h2><pre class="txt">@で箱$を押して、☆のゴールへ運ぶ。箱がゴールに乗ると◎になる。ランダム生成なので、無理そうなら再生成。</pre><div class="bar"><button onclick="skInit()">ランダム再生成</button></div><div id="skMsg" class="msg"></div><div id="skBoard" class="board"></div><div class="pad"><span></span><button onclick="skMove(0,-1)">▲</button><span></span><button onclick="skMove(-1,0)">◀</button><span></span><button onclick="skMove(1,0)">▶</button><span></span><button onclick="skMove(0,1)">▼</button><span></span></div><div id="win-G" class="win"></div></div>
+<div id="H" class="content"><h2>インベーダー</h2><pre class="txt">PC: ←→で移動、スペースで射撃。スマホ: ボタン操作。敵を全滅させれば勝ち。</pre><canvas id="ivCanvas" width="420" height="320"></canvas><div class="bar"><button onclick="ivInit()">最初から</button></div><div class="pad"><button onpointerdown="ivL=1" onpointerup="ivL=0" onpointerleave="ivL=0">◀</button><button onclick="ivFire()">●</button><button onpointerdown="ivR=1" onpointerup="ivR=0" onpointerleave="ivR=0">▶</button></div><div id="ivMsg" class="msg"></div><div id="win-H" class="win"></div></div>
+
+<div id="I" class="content"><h2>Hit &amp; Blow</h2><pre class="txt">4桁・数字重複なし。先に当てた方が勝ち。AIは結果から候補を絞って、分岐が少なそうな手を選ぶ。</pre><div class="bar">ご主人様の秘密: <input id="hbSec" maxlength="4" inputmode="numeric" value="1234"> <button onclick="hbInit()">開始/最初から</button></div><div class="bar">推理: <input id="hbGuess" maxlength="4" inputmode="numeric"> <button onclick="hbTurn()">判定</button></div><div id="hbMsg" class="msg"></div><div id="hbCand"></div><div id="hbLog"></div><div id="win-I" class="win"></div></div>
+<div id="J" class="content"><h2>テトリス</h2><pre class="txt">PC: ←→移動、↑回転、↓落下。スマホはボタン。500点でクリア。</pre><canvas id="ttCanvas" width="240" height="480"></canvas><div class="bar"><button onclick="ttInit()">最初から</button></div><div class="pad"><button onclick="ttMove(-1)">◀</button><button onclick="ttRot()">↻</button><button onclick="ttMove(1)">▶</button><span></span><button onclick="ttDrop()">▼</button><span></span></div><div id="ttMsg" class="msg"></div><div id="win-J" class="win"></div></div>
+<div id="K" class="content"><h2>ブラックジャック</h2><pre class="txt">ご主人様は子。AIが親と子2人を担当。賭け金を決めて150コインでクリア。</pre><div class="bar">賭け枚数 <input id="bjBet" type="number" value="10" min="1" style="width:5em"> <button onclick="bjInit()">最初から</button><button onclick="bjDeal()">次の勝負</button><button onclick="bjHit()">ヒット</button><button onclick="bjStand()">スタンド</button></div><div id="bjMsg" class="msg"></div><div id="bjLog"></div><div id="win-K" class="win"></div></div>
+
+<div id="L" class="content"><h2>4人制ポーカー</h2><pre class="txt">5カードドロー。賭け金を決めて、カードを選んで交換。CPU3人も役を見て交換。160コインでクリア。</pre><div class="bar">賭け枚数 <input id="pkBet" type="number" value="10" min="1" style="width:5em"> <button onclick="pkInit()">最初から</button><button onclick="pkDeal()">配る</button><button onclick="pkDraw()">選んだカードを交換</button></div><div id="pkMsg" class="msg"></div><div id="pkHand" class="cards"></div><div id="pkLog"></div><div id="win-L" class="win"></div></div>
+
+<div id="M" class="content"><h2>クイックス</h2><pre class="txt">簡易版。線で囲って陣地を増やす。自機は赤、敵球は3つ。敵や自分の線に触れず90%取ればクリア。</pre><canvas id="qxCanvas" width="420" height="320"></canvas><div class="bar"><button onclick="qxInit()">最初から</button></div><div class="pad"><span></span><button onclick="qxMove(0,-1)">▲</button><span></span><button onclick="qxMove(-1,0)">◀</button><span></span><button onclick="qxMove(1,0)">▶</button><span></span><button onclick="qxMove(0,1)">▼</button><span></span></div><div id="qxMsg" class="msg"></div><div id="win-M" class="win"></div></div>
+
+<div id="N" class="content"><h2>ルーレット</h2><pre class="txt">実際の台っぽい盤面をクリックして賭ける。数字、列、ダズン、赤黒、偶奇、大小。200コインでクリア。</pre><div class="bar">賭け枚数 <input id="roBet" type="number" value="10" min="1" style="width:5em"> <button onclick="roSpin()">スピン</button><button onclick="roClearBets()">ベット取消</button><button onclick="roInit()">最初から</button></div><div id="roTable" class="rogrid"></div><div id="roMsg" class="msg"></div><div id="roBets" class="msg"></div><div id="roLog"></div><div id="win-N" class="win"></div></div>
+<div id="O" class="content"><h2>スネーク</h2><pre class="txt">餌を取ると体が伸びる。壁や自分の体にぶつかったら負け。長さ20でクリア。</pre><div class="bar"><button onclick="snInit()">最初から</button></div><canvas id="snCanvas" width="360" height="360"></canvas><div class="pad"><span></span><button onclick="snDir(0,-1)">▲</button><span></span><button onclick="snDir(-1,0)">◀</button><button onclick="snPause()">止</button><button onclick="snDir(1,0)">▶</button><span></span><button onclick="snDir(0,1)">▼</button><span></span></div><div id="snMsg" class="msg"></div><div id="win-O" class="win"></div></div>
+<div id="P" class="content"><h2>High &amp; Low</h2><pre class="txt">52枚を最後まで使い切る。最初に1枚めくり、次のカードはマークだけ公開。今のカードより高いか低いか当てるの。使った札は下の一覧で色が変わるわ。</pre><div class="bar"><button onclick="hlInit()">最初から</button></div><div class="hlCards"><div><div class="hlPileLabel">今のカード</div><div id="hlCur" class="hlCard"></div></div><div><div class="hlPileLabel">次のカードのマーク</div><div id="hlNext" class="hlCard hlBack"></div></div></div><div class="hlBtns"><button onclick="hlGuess('H')">HIGH</button><button onclick="hlGuess('L')">LOW</button></div><div id="hlMsg" class="msg"></div><div id="hlBoardWrap"><div id="hlBoard"></div></div><div id="hlLog"></div><div id="win-P" class="win"></div></div>
+
+
+<script>
+const winMap={A:'win01.jpg',B:'win02.jpg',C:'win03.jpg',D:'win04.jpg',E:'win05.jpg',F:'win06.jpg',G:'win07.jpg',H:'win08.jpg',I:'win09.jpg',J:'win10.jpg',K:'win11.jpg',L:'win12.jpg',M:'win13.jpg',N:'win14.jpg',O:'win15.jpg',P:'win16.jpg'};
+function show(id){document.querySelectorAll('.content').forEach(e=>e.classList.remove('active'));document.getElementById(id).classList.add('active')}
+function win(id){let e=document.getElementById('win-'+id);if(e&&!e.innerHTML)e.innerHTML='<p>クリア。まあ、悪くないわ。</p><img src="img/'+winMap[id]+'" onerror="this.outerHTML=\'<p>img/'+winMap[id]+' が見つからないわ。</p>\'">'}
+function clearWin(id){let e=document.getElementById('win-'+id);if(e)e.innerHTML=''}
+function R(n){return Math.floor(Math.random()*n)}
+
+/* A ブロック崩し */
+let br,brCtx,brTimer,brLeft=false,brRight=false;
+function brInit(){clearWin('A');let c=brCanvas;brCtx=c.getContext('2d');br={x:210,y:318,vx:(R(2)?4.8:-4.8),vy:-5.4,p:165,pw:90,py:340,bw:34,bh:11,over:false,blocks:[]};
+ let cols=11,rows=17,gap=3,ox=13,oy=18;
+ for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+  let rate=y<4?.75:y<10?.62:.48;
+  if(Math.random()<rate)br.blocks.push({x:ox+x*(br.bw+gap),y:oy+y*(br.bh+gap),on:1});
+ }
+ if(br.blocks.length<45)for(let y=0;y<10;y++)for(let x=0;x<cols;x+=2)br.blocks.push({x:ox+x*(br.bw+gap),y:oy+y*(br.bh+gap),on:1});
+ brMsg.textContent='段数多め。速度2倍。下の方までランダム配置';clearInterval(brTimer);brTimer=setInterval(brLoop,16)}
+function brLoop(){let c=brCanvas,g=brCtx;g.clearRect(0,0,c.width,c.height);if(brLeft)br.p-=6;if(brRight)br.p+=6;br.p=Math.max(0,Math.min(c.width-br.pw,br.p));br.x+=br.vx;br.y+=br.vy;if(br.x<6||br.x>c.width-6)br.vx*=-1;if(br.y<6)br.vy*=-1;if(br.y>c.height){brMsg.textContent='負け。欲張って詰めた結果ね。';clearInterval(brTimer)}
+ if(br.y>br.py-8&&br.y<br.py+8&&br.x>br.p&&br.x<br.p+br.pw){br.vy=-Math.abs(br.vy);br.vx+=(br.x-(br.p+br.pw/2))/36}
+ let left=0;br.blocks.forEach(b=>{if(b.on){left++;if(br.x>b.x-3&&br.x<b.x+br.bw+3&&br.y>b.y-3&&br.y<b.y+br.bh+3){b.on=0;br.vy*=-1}}});
+ if(left==0){brMsg.textContent='クリア';clearInterval(brTimer);win('A')}
+ g.fillRect(br.p,br.py,br.pw,8);g.beginPath();g.arc(br.x,br.y,6,0,7);g.fill();br.blocks.forEach(b=>{if(b.on)g.strokeRect(b.x,b.y,br.bw,br.bh)})}
+brCanvas.addEventListener('mousemove',e=>{let r=brCanvas.getBoundingClientRect();if(br)br.p=(e.clientX-r.left)/r.width*brCanvas.width-br.pw/2});
+brCanvas.addEventListener('touchmove',e=>{e.preventDefault();let r=brCanvas.getBoundingClientRect(),t=e.touches[0];if(br)br.p=(t.clientX-r.left)/r.width*brCanvas.width-br.pw/2},{passive:false});
+addEventListener('keydown',e=>{if(e.key=='ArrowLeft')brLeft=true;if(e.key=='ArrowRight')brRight=true;if(e.key==' '&&document.querySelector('.content.active').id=='H')ivFire();if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key))e.preventDefault()});
+addEventListener('keyup',e=>{if(e.key=='ArrowLeft')brLeft=false;if(e.key=='ArrowRight')brRight=false});
+
+/* B オセロ */
+let rv;
+function rvInit(){clearWin('B');rv=Array(64).fill(0);rv[27]=rv[36]=2;rv[28]=rv[35]=1;rvDraw()}
+function rvMoves(p,b=rv){let ds=[-9,-8,-7,-1,1,7,8,9],a=[];for(let i=0;i<64;i++)if(!b[i]){let ok=false;for(let d of ds){let j=i+d,seen=false;while(j>=0&&j<64&&Math.abs(j%8-(j-d)%8)<=1&&b[j]==3-p){seen=true;j+=d}if(seen&&j>=0&&j<64&&Math.abs(j%8-(j-d)%8)<=1&&b[j]==p)ok=true}if(ok)a.push(i)}return a}
+function rvPlay(i,p,b=rv){if(!rvMoves(p,b).includes(i))return false;let ds=[-9,-8,-7,-1,1,7,8,9];b[i]=p;for(let d of ds){let j=i+d,cap=[];while(j>=0&&j<64&&Math.abs(j%8-(j-d)%8)<=1&&b[j]==3-p){cap.push(j);j+=d}if(cap.length&&j>=0&&j<64&&Math.abs(j%8-(j-d)%8)<=1&&b[j]==p)cap.forEach(x=>b[x]=p)}return true}
+function rvClick(i){if(rvPlay(i,1)){rvDraw();setTimeout(rvAI,250)}}
+function rvAI(){let m=rvMoves(2);if(m.length){let best=m[0],bs=-999;for(let x of m){let t=rv.slice();rvPlay(x,2,t);let s=(x==0||x==7||x==56||x==63?99:0)+rvMoves(2,t).length-rvMoves(1,t).length*2;if(s>bs){bs=s;best=x}}rvPlay(best,2)}rvDraw()}
+function rvDraw(){let m=rvMoves(1),h='';for(let i=0;i<64;i++){let v=rv[i],s=v?(v==1?'●':'○'):(m.includes(i)?'・':'');h+=`<div class="cell dark ${v==2?'white':'black'}" onclick="rvClick(${i})">${s}</div>`}rvBoard.innerHTML=h;let b=rv.filter(x=>x==1).length,w=rv.filter(x=>x==2).length;if(!m.length&&!rvMoves(2).length){rvMsg.textContent=`終了 黒${b} 白${w}`;if(b>w)win('B')}else rvMsg.textContent=`黒${b} 白${w} ${m.length?'あなたの番':'置けないのでCPUへ'}`;if(!m.length&&rvMoves(2).length)setTimeout(rvAI,300)}
+
+/* C 五目 */
+let gm;
+function gmInit(){clearWin('C');gm=Array(121).fill(0);gmDraw('あなたの番')}
+function gmWinAt(b,p){for(let y=0;y<11;y++)for(let x=0;x<11;x++)for(let [dx,dy] of [[1,0],[0,1],[1,1],[1,-1]]){let n=0;for(let k=0;k<5;k++){let xx=x+dx*k,yy=y+dy*k;if(xx>=0&&xx<11&&yy>=0&&yy<11&&b[yy*11+xx]==p)n++}if(n==5)return true}return false}
+function gmClick(i){if(gm[i]||gmWinAt(gm,1)||gmWinAt(gm,2))return;gm[i]=1;if(gmWinAt(gm,1)){gmDraw('勝ち');win('C');return}setTimeout(gmAI,130);gmDraw('CPU思考中')}
+
+function gmNear(i){let x=i%11,y=i/11|0;for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){let xx=x+dx,yy=y+dy;if(xx>=0&&xx<11&&yy>=0&&yy<11&&gm[yy*11+xx])return true}return false}
+function gmScorePoint(b,i,p){
+ let x=i%11,y=i/11|0,score=0;
+ for(let [dx,dy] of [[1,0],[0,1],[1,1],[1,-1]]){
+  let a=0,c=0,open=0;
+  for(let s=1;s<5;s++){let xx=x+dx*s,yy=y+dy*s;if(xx<0||xx>10||yy<0||yy>10)break;if(b[yy*11+xx]==p)a++;else{if(!b[yy*11+xx])open++;break}}
+  for(let s=1;s<5;s++){let xx=x-dx*s,yy=y-dy*s;if(xx<0||xx>10||yy<0||yy>10)break;if(b[yy*11+xx]==p)c++;else{if(!b[yy*11+xx])open++;break}}
+  let n=a+c+1;
+  if(n>=5)score+=1000000;
+  else if(n==4&&open==2)score+=180000;
+  else if(n==4&&open==1)score+=45000;
+  else if(n==3&&open==2)score+=12000;
+  else if(n==3&&open==1)score+=2200;
+  else if(n==2&&open==2)score+=900;
+  else if(n==2&&open==1)score+=160;
+  else if(n==1&&open==2)score+=30;
+ }
+ return score;
+}
+function gmThreatsAfter(b,p){
+ let n=0;
+ for(let i=0;i<121;i++)if(!b[i]&&gmScorePoint(b,i,p)>=45000)n++;
+ return n;
+}
+function gmAI(){
+ let empty=gm.map((v,i)=>v?null:i).filter(x=>x!==null),pick=null,best=-1;
+ /* 1手勝ち、1手負け阻止 */
+ for(let p of [2,1]){
+  for(let i of empty){let t=gm.slice();t[i]=p;if(gmWinAt(t,p)){pick=i;break}}
+  if(pick!==null)break;
+ }
+ if(pick===null){
+  let cand=empty.filter(gmNear);
+  if(!cand.length)cand=empty;
+  for(let i of cand){
+   let t=gm.slice();t[i]=2;
+   let atk=gmScorePoint(gm,i,2),def=gmScorePoint(gm,i,1);
+   let fork=gmThreatsAfter(t,2),danger=gmThreatsAfter(t,1);
+   let center=20-(Math.abs(i%11-5)+Math.abs((i/11|0)-5))*2;
+   let s=atk*1.18+def*1.06+fork*32000-danger*9000+center+Math.random();
+   if(s>best){best=s;pick=i}
+  }
+ }
+ if(!gm[pick])gm[pick]=2;
+ gmDraw(gmWinAt(gm,2)?'負け': 'あなたの番')
+}
+function gmDraw(msg){let h='';for(let i=0;i<121;i++)h+=`<div class="cell" onclick="gmClick(${i})">${gm[i]==1?'●':gm[i]==2?'○':''}</div>`;gmBoard.innerHTML=h;gmMsg.textContent=msg}
+
+/* D 神経衰弱 */
+let mm,mmOpen,mmTurn,mmScore,mmMem,mmBusy;
+function mmRemember(i){
+ let v=mm.cards[i];
+ if(!mmMem[v])mmMem[v]=[];
+ if(!mmMem[v].includes(i))mmMem[v].push(i);
+}
+function mmInit(){
+ clearWin('D');
+ let a=[];for(let i=1;i<=32;i++)a.push(i,i);
+ a.sort(()=>Math.random()-.5);
+ mm={cards:a,done:Array(64).fill(0)};
+ mmOpen=[];mmTurn=1;mmScore=[0,0,0];mmMem={};mmBusy=false;mmDraw()
+}
+function mmClick(i){if(mmBusy||mmTurn!=1||mm.done[i]||mmOpen.includes(i))return;mmPick(i);if(mmOpen.length==2)mmCheck()}
+function mmPick(i){mmOpen.push(i);mmRemember(i);mmDraw()}
+function mmCheck(){
+ mmBusy=true;let [a,b]=mmOpen;
+ if(mm.cards[a]==mm.cards[b]){
+  mm.done[a]=mm.done[b]=1;mmScore[mmTurn]++;mmOpen=[];mmBusy=false;
+  if(mm.done.every(Boolean)){mmMsg.textContent=`終了 あなた${mmScore[1]} CPU${mmScore[2]}`;if(mmScore[1]>=mmScore[2])win('D')}
+  else if(mmTurn==2)setTimeout(mmAI,450);
+  mmDraw()
+ }else setTimeout(()=>{mmOpen=[];mmTurn=3-mmTurn;mmBusy=false;mmDraw();if(mmTurn==2)setTimeout(mmAI,450)},750)
+}
+function mmKnownPair(){
+ for(let v in mmMem){
+  let a=mmMem[v].filter(i=>!mm.done[i]);
+  if(a.length>=2)return [a[0],a[1]]
+ }
+ return null
+}
+function mmUnknown(){
+ let known=new Set(Object.values(mmMem).flat());
+ let a=[];for(let i=0;i<64;i++)if(!mm.done[i]&&!known.has(i))a.push(i);
+ return a
+}
+function mmAvail(){
+ let a=[];for(let i=0;i<64;i++)if(!mm.done[i]&&!mmOpen.includes(i))a.push(i);
+ return a
+}
+function mmAI(){
+ if(mmTurn!=2||mm.done.every(Boolean))return;
+ let pair=mmKnownPair(),first,second;
+ if(pair){[first,second]=pair}
+ else{
+  let unk=mmUnknown(),avail=mmAvail();
+  first=(unk.length?unk:avail)[R((unk.length?unk:avail).length)];
+ }
+ mmPick(first);
+ setTimeout(()=>{
+  if(second===undefined){
+   let v=mm.cards[first];
+   let known=(mmMem[v]||[]).filter(i=>!mm.done[i]&&i!=first);
+   if(known.length)second=known[0];
+   else{
+    let unk=mmUnknown().filter(i=>i!=first),avail=mmAvail().filter(i=>i!=first);
+    second=(unk.length?unk:avail)[R((unk.length?unk:avail).length)];
+   }
+  }
+  mmPick(second);mmCheck()
+ },500)
+}
+function mmDraw(){
+ let h='';
+ for(let i=0;i<64;i++){
+  let open=mm.done[i]||mmOpen.includes(i),cl=mm.done[i]?'mmDone':(mmOpen.includes(i)?'mmOpen':'face');
+  h+=`<div class="cell ${cl}" style="width:42px;height:42px" onclick="mmClick(${i})">${open?mm.cards[i]:'?'}</div>`
+ }
+ mmBoard.innerHTML=h;
+ if(!mm.done.every(Boolean))mmMsg.textContent=`${mmTurn==1?'あなた':'CPU'}の番　あなた${mmScore[1]} CPU${mmScore[2]}　記憶済み${Object.values(mmMem).reduce((s,a)=>s+a.filter(i=>!mm.done[i]).length,0)}枚`
+}
+
+/* E マイン */
+let ms,msFlag=false,msOver=false;
+function msInit(){clearWin('E');msOver=false;ms=Array(81).fill(0).map(()=>({m:0,o:0,f:0,n:0}));let mines=0;while(mines<10){let i=R(81);if(!ms[i].m){ms[i].m=1;mines++}}for(let i=0;i<81;i++){let x=i%9,y=i/9|0,n=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){let xx=x+dx,yy=y+dy;if(xx>=0&&xx<9&&yy>=0&&yy<9&&ms[yy*9+xx].m)n++}ms[i].n=n}msDraw()}
+function msOpen(i){if(msOver)return;let c=ms[i];if(msFlag){c.f=!c.f;msDraw();return}if(c.f)return;c.o=1;if(c.m){msOver=true;msMsg.textContent='爆発。綺麗に散ったわね';ms.forEach(x=>{if(x.m)x.o=1})}else if(c.n==0){let x=i%9,y=i/9|0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){let xx=x+dx,yy=y+dy,j=yy*9+xx;if(xx>=0&&xx<9&&yy>=0&&yy<9&&!ms[j].o)msOpen(j)}}if(ms.filter(x=>!x.m&&x.o).length==71){msOver=true;msMsg.textContent='クリア';win('E')}msDraw()}
+function msDraw(){let h='';for(let i=0;i<81;i++){let c=ms[i],s=c.o?(c.m?'*':(c.n||'')):(c.f?'旗':'');h+=`<div class="cell ${c.o?'open':''}" onclick="msOpen(${i})">${s}</div>`}msBoard.innerHTML=h;if(!msOver)msMsg.textContent=msFlag?'旗モード':'開くモード'}
+
+/* F 海戦 */
+let bt;
+function btInit(){clearWin('F');bt={me:Array(36).fill(0),en:Array(36).fill(0),mh:Array(36).fill(0),eh:Array(36).fill(0),over:0};btPlace(bt.me);btPlace(bt.en);btDraw()}
+function btPlace(b){for(let len of [3,2,2]){let ok=false;while(!ok){let hor=R(2),x=R(6),y=R(6),cells=[];for(let k=0;k<len;k++){let xx=x+(hor?k:0),yy=y+(hor?0:k);if(xx<6&&yy<6)cells.push(yy*6+xx)}if(cells.length==len&&cells.every(i=>!b[i])){cells.forEach(i=>b[i]=1);ok=true}}}}
+function btShot(i){if(bt.over||bt.eh[i])return;bt.eh[i]=bt.en[i]?2:1;if(bt.eh.filter((v,i)=>v==2&&bt.en[i]).length==7){bt.over=1;btMsg.textContent='勝ち';btDraw();win('F');return}btCpu();btDraw()}
+function btCpu(){let opts=[];for(let i=0;i<36;i++)if(!bt.mh[i])opts.push(i);let hit=bt.mh.findIndex(v=>v==2);let cand=[];if(hit>=0){for(let d of [-6,6,-1,1]){let j=hit+d;if(j>=0&&j<36&&Math.abs(j%6-hit%6)<=1&&!bt.mh[j])cand.push(j)}}let i=(cand.length?cand:opts)[R((cand.length?cand:opts).length)];bt.mh[i]=bt.me[i]?2:1;if(bt.mh.filter((v,i)=>v==2&&bt.me[i]).length==7){bt.over=1;btMsg.textContent='負け'}}
+function btDraw(){let hm='',he='';for(let i=0;i<36;i++){hm+=`<div class="cell ${bt.mh[i]==2?'hit':bt.mh[i]==1?'miss':bt.me[i]?'ship':''}">${bt.mh[i]==2?'×':bt.mh[i]==1?'・':bt.me[i]?'■':''}</div>`;he+=`<div class="cell ${bt.eh[i]==2?'hit':bt.eh[i]==1?'miss':''}" onclick="btShot(${i})">${bt.eh[i]==2?'×':bt.eh[i]==1?'・':''}</div>`}btMe.innerHTML=hm;btEnemy.innerHTML=he;if(!bt.over)btMsg.textContent='敵海域を撃て'}
+
+/* G 倉庫番 */
+let sk;
+function skInit(){clearWin('G');sk={m:[],goals:[],over:0};for(let y=0;y<10;y++){sk.m[y]=[];for(let x=0;x<10;x++)sk.m[y][x]=(x==0||y==0||x==9||y==9)?'#':'.'}
+ let px=1+R(8),py=1+R(8);sk.m[py][px]='@';
+ let walls=10+R(10),tries=0;
+ while(walls&&tries++<300){let x=1+R(8),y=1+R(8);if(sk.m[y][x]=='.'){sk.m[y][x]='#';walls--}}
+ let n=3+R(2),placed=0;
+ while(placed<n&&tries++<600){let x=2+R(6),y=2+R(6),gx=1+R(8),gy=1+R(8);if(sk.m[y][x]=='.'&&sk.m[gy][gx]=='.'&&!sk.goals.some(g=>g.x==gx&&g.y==gy)){sk.m[y][x]='$';sk.goals.push({x:gx,y:gy});placed++}}
+ if(sk.goals.length<2){skInit();return}
+ skDraw()}
+function skAt(x,y){return sk.m[y]&&sk.m[y][x]}
+function skMove(dx,dy){if(sk.over)return;let p=skFind('@'),nx=p.x+dx,ny=p.y+dy,t=skAt(nx,ny);if(t=='#'||!t)return;if(t=='$'){let bx=nx+dx,by=ny+dy;if(skAt(bx,by)!='.')return;sk.m[by][bx]='$';sk.m[ny][nx]='.'}if(skAt(nx,ny)=='.'){sk.m[p.y][p.x]='.';sk.m[ny][nx]='@'}let ok=sk.goals.every(g=>sk.m[g.y][g.x]=='$');skDraw();if(ok){sk.over=1;skMsg.textContent='クリア';win('G')}}
+function skFind(ch){for(let y=0;y<10;y++)for(let x=0;x<10;x++)if(sk.m[y][x]==ch)return{x,y}}
+function skDraw(){let h='';for(let y=0;y<10;y++)for(let x=0;x<10;x++){let g=sk.goals.some(q=>q.x==x&&q.y==y),c=sk.m[y][x],s=c,cl='';if(c=='.'&&g){s='☆';cl='goal'}if(c=='$'&&g){s='◎';cl='hit'}h+=`<div class="cell ${cl}">${s}</div>`}skBoard.innerHTML=h;if(!sk.over)skMsg.textContent='☆がゴール。無理そうなら再生成、そういう雑な人生もあるわ'}
+
+addEventListener('keydown',e=>{let dx=0,dy=0;if(e.key=='ArrowLeft')dx=-1;if(e.key=='ArrowRight')dx=1;if(e.key=='ArrowUp')dy=-1;if(e.key=='ArrowDown')dy=1;if(!dx&&!dy)return;let id=document.querySelector('.content.active').id;if(id=='G')skMove(dx,dy)});
+
+/* H インベーダー */
+let iv,ivCtx,ivTimer,ivL=false,ivR=false;
+function ivInit(){clearWin('H');ivCtx=ivCanvas.getContext('2d');iv={x:195,bul:[],eb:[],en:[],dir:1,t:0,over:0};for(let y=0;y<4;y++)for(let x=0;x<9;x++)iv.en.push({x:40+x*38,y:35+y*24,on:1});ivMsg.textContent='敵を全滅させなさい';clearInterval(ivTimer);ivTimer=setInterval(ivLoop,33)}
+function ivFire(){if(!iv||iv.over)return;if(iv.bul.length<2)iv.bul.push({x:iv.x+15,y:275})}
+function ivLoop(){let g=ivCtx,c=ivCanvas;g.clearRect(0,0,c.width,c.height);if(ivL)iv.x-=6;if(ivR)iv.x+=6;iv.x=Math.max(0,Math.min(390,iv.x));iv.t++;
+ let live=iv.en.filter(e=>e.on),dx=iv.dir*(iv.t%2?1:0);
+ if(dx&&live.length){
+  let minX=Math.min(...live.map(e=>e.x)),maxX=Math.max(...live.map(e=>e.x));
+  if(minX+dx<8||maxX+18+dx>c.width-8){iv.dir*=-1;live.forEach(e=>e.y+=12);dx=0}
+ }
+ live.forEach(e=>{e.x+=dx;if(Math.random()<.002)iv.eb.push({x:e.x+8,y:e.y+12})});
+ iv.bul.forEach(b=>b.y-=8);iv.eb.forEach(b=>b.y+=4);iv.bul=iv.bul.filter(b=>b.y>-10);iv.eb=iv.eb.filter(b=>b.y<330);
+ iv.bul.forEach(b=>iv.en.forEach(e=>{if(e.on&&b.x>e.x&&b.x<e.x+18&&b.y>e.y&&b.y<e.y+14){e.on=0;b.y=-99}}));
+ if(iv.eb.some(b=>b.x>iv.x&&b.x<iv.x+30&&b.y>278&&b.y<300)||iv.en.some(e=>e.on&&e.y>260)){iv.over=1;ivMsg.textContent='負け。侵略されたわね';clearInterval(ivTimer)}
+ if(iv.en.every(e=>!e.on)){iv.over=1;ivMsg.textContent='クリア';clearInterval(ivTimer);win('H')}
+ g.fillRect(iv.x,290,30,8);iv.bul.forEach(b=>g.fillRect(b.x,b.y,3,8));iv.eb.forEach(b=>g.fillRect(b.x,b.y,3,8));iv.en.forEach(e=>{if(e.on)g.strokeRect(e.x,e.y,18,14)})}
+ivCanvas.addEventListener('pointermove',e=>{let r=ivCanvas.getBoundingClientRect();if(iv)iv.x=(e.clientX-r.left)/r.width*ivCanvas.width-15});
+ivCanvas.addEventListener('pointerdown',e=>{ivFire()});
+
+/* I Hit & Blow */
+let hb={};
+function hbAll(){let a=[];for(let n=0;n<10000;n++){let s=('000'+n).slice(-4);if(new Set(s).size==4)a.push(s)}return a}
+function hbJudge(a,b){let h=0,bl=0;for(let i=0;i<4;i++)if(a[i]==b[i])h++;else if(b.includes(a[i]))bl++;return[h,bl]}
+function hbOK(s){return /^\d{4}$/.test(s)&&new Set(s).size==4}
+function hbInit(){clearWin('I');let sec=hbSec.value.trim();if(!hbOK(sec)){hbMsg.textContent='秘密は4桁重複なし。そこからよ';return}let all=hbAll();hb={sec:sec,aiSec:all[R(all.length)],cand:all.slice(),hist:[],over:0};hbLog.textContent='';hbMsg.textContent='開始。4桁を推理しなさい';hbCand.textContent='AI候補: '+hb.cand.length}
+function hbBest(){let c=hb.cand;if(c.length<=2)return c[0];let sample=c.length>700?c.filter((_,i)=>i%Math.ceil(c.length/700)==0):c,best=c[0],bs=1e9;sample.forEach(g=>{let m={};c.forEach(s=>{let r=hbJudge(g,s).join('-');m[r]=(m[r]||0)+1});let sc=Math.max(...Object.values(m))*10+Object.values(m).reduce((a,b)=>a+b*b,0)/c.length;if(sc<bs){bs=sc;best=g}});return best}
+function hbTurn(){if(!hb.sec)hbInit();if(hb.over)return;let g=hbGuess.value.trim();if(!hbOK(g)){hbMsg.textContent='推理も4桁重複なし。面倒な基本ね';return}let r=hbJudge(g,hb.aiSec);hb.hist.push('ご主人様 '+g+' → '+r[0]+'H '+r[1]+'B');if(r[0]==4){hb.over=1;hbMsg.textContent='ご主人様の勝ち';hbLog.textContent=hb.hist.join('\n');win('I');return}let ag=hbBest(),ar=hbJudge(ag,hb.sec);hb.hist.push('AI       '+ag+' → '+ar[0]+'H '+ar[1]+'B');hb.cand=hb.cand.filter(x=>hbJudge(ag,x)[0]==ar[0]&&hbJudge(ag,x)[1]==ar[1]);if(ar[0]==4){hb.over=1;hbMsg.textContent='AIの勝ち。読まれたわね'}else hbMsg.textContent='続行';hbCand.textContent='AI候補: '+hb.cand.length;hbLog.textContent=hb.hist.join('\n')}
+
+/* J テトリス */
+let tt,ttCtx,ttTimer,ttShapes=[[[1,1,1,1]],[[1,1],[1,1]],[[0,1,0],[1,1,1]],[[1,0,0],[1,1,1]],[[0,0,1],[1,1,1]],[[1,1,0],[0,1,1]],[[0,1,1],[1,1,0]]];
+function ttInit(){clearWin('J');ttCtx=ttCanvas.getContext('2d');tt={w:10,h:20,g:Array.from({length:20},()=>Array(10).fill(0)),p:null,x:3,y:0,sc:0,over:0};clearInterval(ttTimer);ttNew();ttTimer=setInterval(ttTick,520);ttDraw()}
+function ttNew(){tt.p=ttShapes[R(ttShapes.length)].map(r=>r.slice());tt.x=3;tt.y=0;if(ttHit(0,0,tt.p)){tt.over=1;ttMsg.textContent='詰み。積み方も人生も雑だったわ';clearInterval(ttTimer)}}
+function ttHit(dx,dy,p){for(let y=0;y<p.length;y++)for(let x=0;x<p[y].length;x++)if(p[y][x]){let nx=tt.x+x+dx,ny=tt.y+y+dy;if(nx<0||nx>=tt.w||ny>=tt.h||(ny>=0&&tt.g[ny][nx]))return 1}return 0}
+function ttPut(){tt.p.forEach((r,y)=>r.forEach((v,x)=>{if(v&&tt.y+y>=0)tt.g[tt.y+y][tt.x+x]=1}));let lines=0;tt.g=tt.g.filter(r=>{if(r.every(v=>v)){lines++;return false}return true});while(tt.g.length<20)tt.g.unshift(Array(10).fill(0));tt.sc+=lines*100+10;if(tt.sc>=500&&!tt.over){tt.over=1;ttMsg.textContent='クリア '+tt.sc+'点';clearInterval(ttTimer);win('J')}else ttNew()}
+function ttTick(){if(tt.over)return;if(!ttHit(0,1,tt.p))tt.y++;else ttPut();ttDraw()}
+function ttMove(d){if(!tt||tt.over)return;if(!ttHit(d,0,tt.p))tt.x+=d;ttDraw()}
+function ttDrop(){if(!tt||tt.over)return;if(!ttHit(0,1,tt.p))tt.y++;else ttPut();ttDraw()}
+function ttRot(){if(!tt||tt.over)return;let p=tt.p[0].map((_,i)=>tt.p.map(r=>r[i]).reverse());if(!ttHit(0,0,p))tt.p=p;ttDraw()}
+function ttDraw(){let g=ttCtx,sz=24;g.clearRect(0,0,240,480);for(let y=0;y<20;y++)for(let x=0;x<10;x++){g.strokeRect(x*sz,y*sz,sz,sz);if(tt.g[y][x])g.fillRect(x*sz+2,y*sz+2,sz-4,sz-4)}tt.p.forEach((r,y)=>r.forEach((v,x)=>{if(v)g.fillRect((tt.x+x)*sz+2,(tt.y+y)*sz+2,sz-4,sz-4)}));ttMsg.textContent=tt.over?ttMsg.textContent:'得点 '+tt.sc+' / 500'}
+
+/* K ブラックジャック */
+let bj={};
+function deck(){let d=[];for(let s of '♠♥♦♣')for(let r of ['A','2','3','4','5','6','7','8','9','10','J','Q','K'])d.push(r+s);return d.sort(()=>Math.random()-.5)}
+function cv(c){let r=c.slice(0,-1);return r=='A'?11:['J','Q','K'].includes(r)?10:+r}
+function bv(h){let v=h.reduce((a,c)=>a+cv(c),0),a=h.filter(c=>c[0]=='A').length;while(v>21&&a){v-=10;a--}return v}
+function bjBetVal(){return Math.max(1,Math.min(bj.coin,+bjBet.value||1))}
+function bjInit(){clearWin('K');bj={coin:100};bjDeal()}
+function bjDeal(){clearWin('K');if(!bj.coin)bj.coin=100;bj.d=deck();bj.h=[[],[],[],[]];for(let i=0;i<2;i++)for(let j=0;j<4;j++)bj.h[j].push(bj.d.pop());bj.done=0;bjMsg.textContent='ご主人様の番 / '+bj.coin+'コイン';bjShow(false)}
+function bjHit(){if(bj.done)return;bj.h[0].push(bj.d.pop());if(bv(bj.h[0])>21){bj.done=1;bjEnd()}else bjShow(false)}
+function bjStand(){if(bj.done)return;bj.done=1;bjEnd()}
+function bjOneRes(v,d){return v>21?'負け':d>21||v>d?'勝ち':v==d?'引分':'負け'}
+function bjEnd(){for(let j=1;j<3;j++)while(bv(bj.h[j])<16)bj.h[j].push(bj.d.pop());while(bv(bj.h[3])<17)bj.h[3].push(bj.d.pop());let bet=bjBetVal(),dealer=bv(bj.h[3]),p=bv(bj.h[0]),r=bjOneRes(p,dealer),gain=r=='勝ち'?bet:r=='負け'?-bet:0;bj.coin+=gain;bjMsg.textContent='結果 '+r+' '+(gain>=0?'+':'')+gain+' / '+bj.coin+'コイン';bjShow(true);if(bj.coin>=150)win('K');if(bj.coin<=0)bjMsg.textContent+='。破産。貴族ごっこ終了'}
+function bjShow(open){let n=['ご主人様','CPU子1','CPU子2','AI親'],dealer=open?bv(bj.h[3]):0;bjLog.textContent=n.map((x,i)=>{let v=bv(bj.h[i]),hand=(i==3&&!open?bj.h[i][0]+' ??':bj.h[i].join(' ')),res=(open&&i<3)?' / '+bjOneRes(v,dealer):'';return x+': '+hand+'  '+(i==3&&!open?'':v)+res}).join('\n')}
+
+/* L ポーカー */
+let pk={};
+function rankInfo(h){
+ let rs='23456789TJQKA',r=h.map(c=>c.slice(0,-1).replace('10','T')),cnt={};
+ r.forEach(x=>cnt[x]=(cnt[x]||0)+1);
+ let nums=r.map(x=>rs.indexOf(x)).sort((a,b)=>b-a),flush=h.every(c=>c.slice(-1)==h[0].slice(-1));
+ let lowA=nums.join(',')=='12,3,2,1,0',str=lowA||nums.every((v,i)=>!i||v==nums[i-1]-1);
+ let entries=Object.keys(cnt).map(k=>({r:k,n:cnt[k],v:rs.indexOf(k)})).sort((a,b)=>b.n-a.n||b.v-a.v);
+ let names=['役無し','ワンペア','ツーペア','スリーカード','ストレート','フラッシュ','フルハウス','フォーカード','ストレートフラッシュ'];
+ let lv,tb=[];
+ if(str&&flush){lv=8;tb=[lowA?3:nums[0]]}
+ else if(entries[0].n==4){lv=7;tb=[entries[0].v,entries[1].v]}
+ else if(entries[0].n==3&&entries[1].n==2){lv=6;tb=[entries[0].v,entries[1].v]}
+ else if(flush){lv=5;tb=nums}
+ else if(str){lv=4;tb=[lowA?3:nums[0]]}
+ else if(entries[0].n==3){lv=3;tb=[entries[0].v,...entries.slice(1).map(e=>e.v).sort((a,b)=>b-a)]}
+ else if(entries[0].n==2&&entries[1].n==2){lv=2;let ps=entries.filter(e=>e.n==2).map(e=>e.v).sort((a,b)=>b-a),k=entries.find(e=>e.n==1).v;tb=[...ps,k]}
+ else if(entries[0].n==2){lv=1;tb=[entries[0].v,...entries.slice(1).map(e=>e.v).sort((a,b)=>b-a)]}
+ else{lv=0;tb=nums}
+ let score=lv*10000000+tb.reduce((a,v)=>a*15+v,0);
+ return {score:score,name:names[lv]}
+}
+function rankHand(h){return rankInfo(h).score}
+function pkBetVal(){return Math.max(1,Math.min(pk.coin,+pkBet.value||1))}
+function pkInit(){clearWin('L');pk={coin:100,sel:[],stage:0};pkDeal()}
+function pkDeal(){clearWin('L');if(!pk.coin)pk.coin=100;pk.d=deck();pk.h=[[],[],[],[]];pk.sel=[];pk.stage=1;for(let i=0;i<5;i++)for(let j=0;j<4;j++)pk.h[j].push(pk.d.pop());pkMsg.textContent='交換するカードを選びなさい / '+pk.coin+'コイン';pkDrawHand();pkLog.textContent='コイン '+pk.coin}
+function pkDrawHand(){pkHand.innerHTML=pk.h[0].map((c,i)=>`<button class="${pk.sel.includes(i)?'sel':''}" onclick="pkToggle(${i})">${c}</button>`).join('')}
+function pkToggle(i){if(!pk.stage)return;let k=pk.sel.indexOf(i);if(k>=0)pk.sel.splice(k,1);else pk.sel.push(i);pkDrawHand()}
+function pkCpuSwap(h){let info=rankInfo(h);let cnt={};h.forEach(c=>{let r=c.slice(0,-1).replace('10','T');cnt[r]=(cnt[r]||0)+1});let suitCnt={};h.forEach(c=>suitCnt[c.slice(-1)]=(suitCnt[c.slice(-1)]||0)+1);let keepSuit=Object.keys(suitCnt).find(s=>suitCnt[s]>=4);return h.map(c=>{let r=c.slice(0,-1).replace('10','T');if(info.name!='役無し'&&info.name!='ワンペア')return c;if(cnt[r]>=2||cv(c)>=11||c.slice(-1)==keepSuit)return c;return pk.d.pop()})}
+function pkDraw(){if(pk.stage!=1)return;let bet=pkBetVal();pk.sel.forEach(i=>pk.h[0][i]=pk.d.pop());for(let j=1;j<4;j++)pk.h[j]=pkCpuSwap(pk.h[j]);let infos=pk.h.map(rankInfo),sc=infos.map(x=>x.score),mx=Math.max(...sc),wins=sc.map((v,i)=>v==mx?i:null).filter(v=>v!==null),gain=wins.includes(0)?(wins.length==1?bet*3:Math.floor(bet/wins.length)):-bet;pk.coin+=gain;pk.stage=0;pkDrawHand();let names=['ご主人様','CPU1','CPU2','CPU3'];pkMsg.textContent=(wins.includes(0)?'勝ち':'負け')+' '+(gain>=0?'+':'')+gain+' / '+pk.coin+'コイン';pkLog.textContent=pk.h.map((h,i)=>`${names[i]}: ${h.join(' ')}  ${infos[i].name}${wins.includes(i)?' ←勝者':''}`).join('\n');if(pk.coin>=160)win('L');if(pk.coin<=0)pkMsg.textContent+='。破産ね'}
+
+/* M クイックス簡易 */
+let qx,qxCtx,qxTimer;
+function qxInit(){
+ clearWin('M');qxCtx=qxCanvas.getContext('2d');
+ let balls=[{x:7,y:6,dx:.55,dy:.45},{x:13,y:8,dx:-.5,dy:.6},{x:10,y:11,dx:.62,dy:-.48}];
+ qx={w:21,h:16,g:Array.from({length:16},(_,y)=>Array.from({length:21},(_,x)=>x==0||y==0||x==20||y==15?1:0)),x:0,y:0,path:[],e:balls,over:0,ban:null};
+ clearInterval(qxTimer);qxTimer=setInterval(qxLoop,70);qxDraw()
+}
+function qxLose(s){qx.over=1;qxMsg.textContent=s;clearInterval(qxTimer);qxDraw()}
+function qxMove(dx,dy){
+ if(!qx||qx.over)return;
+ let nx=Math.max(0,Math.min(qx.w-1,qx.x+dx)),ny=Math.max(0,Math.min(qx.h-1,qx.y+dy));
+ if(nx==qx.x&&ny==qx.y)return;
+ if(qx.path.length&&qx.ban&&nx==qx.ban.x&&ny==qx.ban.y){qxLose('出発地点へ戻ったわ。負け');return}
+ if(qx.path.some(p=>p.x==nx&&p.y==ny)){qxLose('自分の線に戻ったわ。負け');return}
+ let wasOwned=!!qx.g[qx.y][qx.x];
+ qx.x=nx;qx.y=ny;
+ if(!qx.g[ny][nx]){
+  if(wasOwned&&qx.path.length==0)qx.ban={x:qx.x-dx,y:qx.y-dy}; // 進み始めた直前の領土マスは進入禁止
+  qx.path.push({x:nx,y:ny});
+ }else if(qx.path.length)qxComplete();
+ qxDraw()
+}
+function qxComplete(){
+ qx.path.forEach(p=>qx.g[p.y][p.x]=1);
+ let seen=Array.from({length:qx.h},()=>Array(qx.w).fill(0)),comps=[];
+ for(let y=0;y<qx.h;y++)for(let x=0;x<qx.w;x++){
+  if(qx.g[y][x]||seen[y][x])continue;
+  let q=[[x,y]],cells=[];seen[y][x]=1;
+  for(let i=0;i<q.length;i++){
+   let [cx,cy]=q[i];cells.push([cx,cy]);
+   [[1,0],[-1,0],[0,1],[0,-1]].forEach(d=>{
+    let nx=cx+d[0],ny=cy+d[1];
+    if(nx>=0&&ny>=0&&nx<qx.w&&ny<qx.h&&!qx.g[ny][nx]&&!seen[ny][nx]){seen[ny][nx]=1;q.push([nx,ny])}
+   })
+  }
+  let balls=qx.e.filter(e=>cells.some(c=>c[0]==Math.floor(e.x+.5)&&c[1]==Math.floor(e.y+.5))).length;
+  comps.push({cells,balls})
+ }
+ if(comps.length>1){
+  // 残す領域は「一番広い敵球あり領域」。それ以外は、球がいても捕獲して消す
+  let keep=-1,best=-1;
+  comps.forEach((c,i)=>{let sc=(c.balls?100000:0)+c.cells.length;if(sc>best){best=sc;keep=i}});
+  comps.forEach((c,i)=>{if(i!=keep)c.cells.forEach(([x,y])=>qx.g[y][x]=1)});
+  qx.e=qx.e.filter(e=>!qx.g[Math.floor(e.y+.5)]?.[Math.floor(e.x+.5)]);
+ }
+ qx.path=[];qx.ban=null;
+ let pct=qxPct();if(pct>=90){qx.over=1;clearInterval(qxTimer);qxMsg.textContent='クリア '+pct+'%';win('M')}
+}
+function qxOwned(x,y){let ix=Math.floor(x+.5),iy=Math.floor(y+.5);return ix<0||iy<0||ix>=qx.w||iy>=qx.h||qx.g[iy][ix]}
+function qxPct(){return Math.round(qx.g.flat().filter(v=>v).length/(qx.w*qx.h)*100)}
+function qxLoop(){
+ if(qx.over)return;
+ for(let e of qx.e){
+  if(qxOwned(e.x+e.dx,e.y))e.dx*=-1;else e.x+=e.dx;
+  if(qxOwned(e.x,e.y+e.dy))e.dy*=-1;else e.y+=e.dy;
+  let ex=Math.floor(e.x+.5),ey=Math.floor(e.y+.5);
+  if((ex==qx.x&&ey==qx.y)||qx.path.some(p=>p.x==ex&&p.y==ey)){qxLose('敵に触れたわ。負け');return}
+ }
+ qxDraw()
+}
+function qxDraw(){
+ let g=qxCtx,sz=20;g.clearRect(0,0,420,320);g.lineWidth=1;
+ for(let y=0;y<qx.h;y++)for(let x=0;x<qx.w;x++){
+  g.strokeStyle='#bbb';g.strokeRect(x*sz,y*sz,sz,sz);
+  if(qx.g[y][x]){g.fillStyle='#cfe8ff';g.fillRect(x*sz+1,y*sz+1,sz-2,sz-2)}
+ }
+ qx.path.forEach(p=>{g.fillStyle='#ffe08a';g.fillRect(p.x*sz+4,p.y*sz+4,sz-8,sz-8)});
+ if(qx.ban){g.fillStyle='#f6b';g.fillRect(qx.ban.x*sz+6,qx.ban.y*sz+6,sz-12,sz-12)}
+ g.fillStyle='#e33';g.fillRect(qx.x*sz+3,qx.y*sz+3,14,14);
+ g.strokeStyle='#900';g.lineWidth=2;g.strokeRect(qx.x*sz+3,qx.y*sz+3,14,14);
+ g.fillStyle='#111';for(let e of qx.e){g.beginPath();g.arc(e.x*sz+10,e.y*sz+10,7,0,7);g.fill()}
+ let pct=qxPct();if(!qx.over)qxMsg.textContent='占領 '+pct+'% / 90%　敵球 '+qx.e.length
+}
+
+/* N ルーレット */
+let ro={};
+const roReds=[1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36];
+function roInit(){clearWin('N');ro={coin:100,bets:[]};roMakeTable();roLog.textContent='';roMsg.textContent='100コイン開始。複数ベットしてからスピン。200でクリア';roShowBets()}
+function roName(kind,num){
+ if(kind=='red')return'赤';if(kind=='black')return'黒';if(kind=='even')return'偶数';if(kind=='odd')return'奇数';
+ if(kind=='low')return'1-18';if(kind=='high')return'19-36';if(kind=='dozen')return['','1st 12','2nd 12','3rd 12'][num];
+ if(kind=='col')return'列 '+num;return'数字 '+num
+}
+function roMakeTable(){
+ let h='<button class="ro0 rogreen" onclick="roBetPlace(\'num\',0)">0</button>';
+ for(let row=0;row<3;row++)for(let col=0;col<12;col++){
+  let n=3*col+(3-row),cls=roReds.includes(n)?'rored':'roblack';
+  h+=`<button class="${cls}" onclick="roBetPlace('num',${n})">${n}</button>`
+ }
+ h+='<button class="rodoz" onclick="roBetPlace(\'dozen\',1)">1st 12</button><button class="rodoz" onclick="roBetPlace(\'dozen\',2)">2nd 12</button><button class="rodoz" onclick="roBetPlace(\'dozen\',3)">3rd 12</button>';
+ h+='<button class="roout" onclick="roBetPlace(\'low\')">1-18</button><button class="roout" onclick="roBetPlace(\'even\')">EVEN</button><button class="roout rored" onclick="roBetPlace(\'red\')">RED</button><button class="roout roblack" onclick="roBetPlace(\'black\')">BLACK</button><button class="roout" onclick="roBetPlace(\'odd\')">ODD</button><button class="roout" onclick="roBetPlace(\'high\')">19-36</button>';
+ h+='<button class="rodoz" onclick="roBetPlace(\'col\',1)">2 to 1</button><button class="rodoz" onclick="roBetPlace(\'col\',2)">2 to 1</button><button class="rodoz" onclick="roBetPlace(\'col\',3)">2 to 1</button>';
+ roTable.innerHTML=h
+}
+function roBetPlace(kind,num){
+ if(!ro.coin)roInit();
+ let bet=Math.max(1,+roBet.value|0),used=ro.bets.reduce((s,b)=>s+b.bet,0);
+ if(used+bet>ro.coin){roMsg.textContent='コイン不足。身の丈を知りなさい';return}
+ ro.bets.push({kind,num,bet});roMsg.textContent='ベット追加：'+roName(kind,num)+' '+bet+'枚';roShowBets()
+}
+function roClearBets(){ro.bets=[];roMsg.textContent='ベットを空にした';roShowBets()}
+function roShowBets(){
+ let used=ro.bets.reduce((s,b)=>s+b.bet,0);
+ roBets.textContent=ro.bets.length?('ベット中 '+used+'枚 / 残り '+(ro.coin-used)+'枚\n'+ro.bets.map((b,i)=>(i+1)+'. '+roName(b.kind,b.num)+' '+b.bet+'枚').join('\n')):'ベットなし'
+}
+function roJudge(b,n){
+ let red=roReds.includes(n),kind=b.kind,num=b.num;
+ if(kind=='red')return {ok:red&&n,mul:1};
+ if(kind=='black')return {ok:!red&&n,mul:1};
+ if(kind=='even')return {ok:n&&n%2==0,mul:1};
+ if(kind=='odd')return {ok:n%2==1,mul:1};
+ if(kind=='low')return {ok:n>=1&&n<=18,mul:1};
+ if(kind=='high')return {ok:n>=19&&n<=36,mul:1};
+ if(kind=='dozen')return {ok:n>=1+(num-1)*12&&n<=num*12,mul:2};
+ if(kind=='col')return {ok:n&&((n-1)%3)==(num-1),mul:2};
+ return {ok:n==num,mul:35}
+}
+function roSpin(){
+ if(!ro.coin)roInit();
+ if(!ro.bets.length){roMsg.textContent='先に台をクリックして賭けなさい';return}
+ let n=R(37),gain=0,lines=[];
+ ro.bets.forEach(b=>{
+  let j=roJudge(b,n),g=j.ok?b.bet*j.mul:-b.bet;gain+=g;
+  lines.push(`${roName(b.kind,b.num)} ${b.bet}枚 → ${j.ok?'当たり':'外れ'} ${(g>=0?'+':'')+g}`)
+ });
+ ro.coin+=gain;
+ roMsg.textContent='出目 '+n+' / 合計 '+(gain>=0?'+':'')+gain+' / '+ro.coin+'コイン';
+ roLog.textContent+=roMsg.textContent+'\n'+lines.join('\n')+'\n\n';
+ ro.bets=[];roShowBets();
+ if(ro.coin>=200)win('N');if(ro.coin<=0)roMsg.textContent+='。素寒貧ね'
+}
+
+/* O スネーク */
+let sn={},snCtx,snTimer;
+function snInit(){
+ clearWin('O');clearInterval(snTimer);
+ snCtx=snCanvas.getContext('2d');
+ sn={w:20,h:20,body:[{x:9,y:9},{x:8,y:9},{x:7,y:9}],dx:1,dy:0,ndx:1,ndy:0,food:null,over:false,pause:false};
+ snFood();snDraw();snMsg.textContent='長さ20でクリア。餌を取りなさい';
+ snTimer=setInterval(snStep,110)
+}
+function snFood(){
+ let ok=false;
+ while(!ok){
+  let f={x:R(sn.w),y:R(sn.h)};
+  ok=!sn.body.some(p=>p.x==f.x&&p.y==f.y);
+  if(ok)sn.food=f
+ }
+}
+function snDir(x,y){
+ if(sn.over)return;
+ if(sn.body.length>1&&x==-sn.dx&&y==-sn.dy)return;
+ sn.ndx=x;sn.ndy=y
+}
+function snPause(){sn.pause=!sn.pause;snMsg.textContent=sn.pause?'一時停止':'再開'}
+function snStep(){
+ if(document.querySelector('.content.active').id!='O'||sn.over||sn.pause)return;
+ sn.dx=sn.ndx;sn.dy=sn.ndy;
+ let h=sn.body[0],n={x:h.x+sn.dx,y:h.y+sn.dy};
+ if(n.x<0||n.y<0||n.x>=sn.w||n.y>=sn.h||sn.body.some(p=>p.x==n.x&&p.y==n.y)){
+  sn.over=true;snMsg.textContent='ゲームオーバー。自分か壁にぶつかったわ';snDraw();return
+ }
+ sn.body.unshift(n);
+ if(n.x==sn.food.x&&n.y==sn.food.y){
+  snMsg.textContent='長さ '+sn.body.length+' / 20';
+  if(sn.body.length>=20){sn.over=true;snDraw();win('O');return}
+  snFood()
+ }else sn.body.pop();
+ snDraw()
+}
+function snDraw(){
+ let c=snCanvas,g=c.width/sn.w;
+ snCtx.clearRect(0,0,c.width,c.height);
+ snCtx.fillStyle='#e9f7ef';snCtx.fillRect(0,0,c.width,c.height);
+ snCtx.strokeStyle='#ddd';
+ for(let i=0;i<=sn.w;i++){snCtx.beginPath();snCtx.moveTo(i*g,0);snCtx.lineTo(i*g,c.height);snCtx.stroke();snCtx.beginPath();snCtx.moveTo(0,i*g);snCtx.lineTo(c.width,i*g);snCtx.stroke()}
+ snCtx.fillStyle='#d33';snCtx.beginPath();snCtx.arc((sn.food.x+.5)*g,(sn.food.y+.5)*g,g*.35,0,Math.PI*2);snCtx.fill();
+ sn.body.forEach((p,i)=>{snCtx.fillStyle=i?'#222':'#0a8';snCtx.fillRect(p.x*g+2,p.y*g+2,g-4,g-4)});
+}
+
+brInit();rvInit();gmInit();mmInit();msInit();btInit();skInit();ivInit();hbInit();ttInit();bjInit();pkInit();qxInit();roInit();snInit();
+
+/* P High & Low */
+let hl={};
+const hlSuits=['♠','♥','♦','♣'];
+function hlDeck(){
+ let d=[];for(let s of hlSuits)for(let n=1;n<=13;n++)d.push({s,n});
+ return d.sort(()=>Math.random()-.5)
+}
+function hlKey(c){return c.s+'-'+c.n}
+function hlRankText(n){return ''+n}
+function hlCardText(c){return hlRankText(c.n)+c.s}
+function hlColor(c){return (c.s=='♥'||c.s=='♦')?'redCard':'blackCard'}
+function hlInit(){
+ clearWin('P');
+ hl={d:hlDeck(),cur:null,next:null,used:{},score:0,miss:0,draw:0,turn:0,over:0,log:[]};
+ hl.cur=hl.d.pop();
+ hl.used[hlKey(hl.cur)]='current';
+ hlNextCard();
+ hlDraw('最初のカードよ。次のマークを見て選びなさい')
+}
+function hlNextCard(){hl.next=hl.d.length?hl.d[hl.d.length-1]:null}
+function hlGuess(dir){
+ if(hl.over||!hl.cur||!hl.next)return;
+ let prev=hl.cur,next=hl.d.pop(),result='';
+ if(next.n==prev.n){hl.draw++;result='同値'}
+ else if((dir=='H'&&next.n>prev.n)||(dir=='L'&&next.n<prev.n)){hl.score++;result='正解'}
+ else{hl.miss++;result='外れ'}
+ hl.used[hlKey(prev)]='used';
+ hl.cur=next;
+ hl.used[hlKey(hl.cur)]='current';
+ hl.turn++;
+ hl.log.unshift(`${hl.turn}. ${hlCardText(prev)} → ${hlCardText(next)} / ${dir=='H'?'HIGH':'LOW'} / ${result}`);
+ if(!hl.d.length){
+  hl.over=1;hl.next=null;
+  hlDraw(`全部めくり切ったわ。正解${hl.score} 外れ${hl.miss} 同値${hl.draw}`);
+  win('P');
+  return
+ }
+ hlNextCard();
+ hlDraw(`${result}。次へ進むわ`)
+}
+function hlBoardCell(s,n){
+ let key=s+'-'+n,st=hl.used[key]||'',cls=['hlRef',(s=='♥'||s=='♦')?'hlRed':'hlBlack'];
+ if(st=='used')cls.push('hlUsed');
+ if(st=='current')cls.push('hlCurrent');
+ return `<div class="${cls.join(' ')}">${hlRankText(n)}</div>`
+}
+function hlDraw(msg){
+ if(!hl.cur)return;
+ hlCur.className='hlCard '+hlColor(hl.cur);
+ hlCur.textContent=hlCardText(hl.cur);
+ if(hl.next){
+  hlNext.className='hlCard hlBack '+hlColor(hl.next);
+  hlNext.textContent='?'+hl.next.s;
+ }else{
+  hlNext.className='hlCard hlBack';
+  hlNext.textContent='--';
+ }
+ let h='<div class="hlHead"></div>';
+ for(let n=1;n<=13;n++)h+=`<div class="hlHead">${hlRankText(n)}</div>`;
+ for(let s of hlSuits){
+  h+=`<div class="hlSuit ${(s=='♥'||s=='♦')?'hlRed':'hlBlack'}">${s}</div>`;
+  for(let n=1;n<=13;n++)h+=hlBoardCell(s,n);
+ }
+ hlBoard.innerHTML=h;
+ let usedCnt=Object.keys(hl.used).length;
+ hlMsg.textContent=`${msg}　正解${hl.score} / 外れ${hl.miss} / 同値${hl.draw}　進行${hl.turn}/51　使用${usedCnt}/52`;
+ hlLog.textContent=hl.log.slice(0,16).join('\n')
+}
+
+
+addEventListener('keydown',e=>{let id=document.querySelector('.content.active').id;if(id=='J'){if(e.key=='ArrowLeft')ttMove(-1);if(e.key=='ArrowRight')ttMove(1);if(e.key=='ArrowUp')ttRot();if(e.key=='ArrowDown')ttDrop()}if(id=='M'){if(e.key=='ArrowLeft')qxMove(-1,0);if(e.key=='ArrowRight')qxMove(1,0);if(e.key=='ArrowUp')qxMove(0,-1);if(e.key=='ArrowDown')qxMove(0,1)}if(id=='O'){if(e.key=='ArrowLeft')snDir(-1,0);if(e.key=='ArrowRight')snDir(1,0);if(e.key=='ArrowUp')snDir(0,-1);if(e.key=='ArrowDown')snDir(0,1)}});
+</script>
+</body>
+</html>
