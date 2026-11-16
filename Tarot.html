@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tarot Reading ver2 | タロット展開ボード</title>
+<style>
+  :root { color-scheme:dark; --bg:#0c101a; --panel:#161d2b; --panel2:#1c2535; --line:#34435a; --gold:#dec28a; --gold2:#aa8c56; --text:#f4eee3; --muted:#aab4c5; --accent:#8dbbc5; --card-w:130px; --card-h:190px; }
+  * {box-sizing:border-box}
+  html,body {margin:0;min-height:100%;font-family:system-ui,-apple-system,"Yu Gothic","Meiryo",sans-serif;background:var(--bg);color:var(--text)}
+  button,input,select,textarea {font:inherit}
+  button {cursor:pointer}
+  button:disabled {cursor:not-allowed;opacity:.43}
+  button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible {outline:2px solid var(--accent);outline-offset:2px}
+  .app {min-height:100vh;display:flex;flex-direction:column}
+  .topbar {display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:74px;padding:14px 23px;border-bottom:1px solid #354258;background:#111825}
+  .brand {display:flex;align-items:center;gap:13px;min-width:0}
+  .brand-mark {width:39px;height:39px;flex:none;display:grid;place-items:center;border:1px solid var(--gold2);border-radius:11px;color:var(--gold);font-size:24px;background:#1d2734}
+  h1 {font-family:Georgia,"Yu Mincho",serif;font-size:21px;font-weight:600;letter-spacing:.055em;margin:0}
+  .sub {font-size:12px;color:var(--muted);margin-top:2px}
+  .top-actions {display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .btn {background:#263145;border:1px solid #485975;color:#eaf0fa;border-radius:9px;padding:9px 12px;line-height:1.15;font-size:13px;min-height:36px;transition:background .15s,border-color .15s}
+  .btn:hover:not(:disabled) {background:#33435a;border-color:#7e95b4}
+  .btn.primary {background:#745c36;color:#fff4df;border-color:#b9985e;font-weight:700}
+  .btn.primary:hover:not(:disabled) {background:#906f40}
+  .btn.small {padding:7px 10px;min-height:31px;font-size:12px}
+  .btn.warn {border-color:#a0675e;color:#ffd4ce}
+  .layout {display:flex;flex:1;min-height:0}
+  .sidebar {width:312px;flex:none;padding:19px;overflow-y:auto;background:#141b28;border-right:1px solid #2f3b50}
+  .group {margin-bottom:22px}
+  .group-title {color:var(--gold);font-size:12px;font-weight:750;letter-spacing:.12em;margin:0 0 10px}
+  .muted {font-size:12px;color:var(--muted);line-height:1.6}
+  .field {width:100%;background:#0e1521;border:1px solid #3d4a61;color:#eff4f9;border-radius:8px;padding:9px 10px;font-size:13px;outline:0}
+  .field:focus {border-color:#8ebcc6}
+  .field[disabled] {opacity:.6}
+  .field::placeholder {color:#78869b}
+  label.form-label {font-size:12px;color:#d4dde9;display:block;margin:9px 0 6px}
+  .choice-row {display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .choice-btn {background:#111a28;border:1px solid #3e4b60;color:#bac5d5;border-radius:9px;padding:10px 7px;font-size:12px;min-height:43px}
+  .choice-btn.active {border-color:#c5a56a;background:#3c3227;color:#ffebbd;font-weight:700}
+  .choice-btn strong {display:block;font-size:13px}
+  .deck-station {display:flex;gap:16px;align-items:center;margin:13px 0 7px;padding:13px;background:#101725;border:1px solid #34425b;border-radius:13px}
+  .drawpile {position:relative;width:84px;height:135px;flex:none;border-radius:8px;border:1px solid #856d45;background:radial-gradient(circle at 50% 42%,#4c3c5f,#182235 65%);box-shadow:2px 3px 0 #293246,5px 6px 0 #172032,0 7px 16px #0007;touch-action:none;user-select:none;cursor:grab;overflow:hidden}
+  .drawpile:active {cursor:grabbing}
+  .drawpile.empty {cursor:not-allowed;opacity:.55}
+  .drawpile img {width:100%;height:100%;object-fit:fill;pointer-events:none}
+  .drawpile .pile-fallback {position:absolute;inset:0;display:grid;place-items:center;color:#d7be86;font-family:Georgia,serif;font-size:28px;pointer-events:none;background:linear-gradient(135deg,#293d50,#3b2b4d)}
+  .deck-info strong {display:block;font-size:27px;color:var(--gold);font-variant-numeric:tabular-nums}
+  .deck-info small {display:block;font-size:11px;color:var(--muted);margin-top:2px}
+  .deck-info .hint {margin-top:9px;color:#d5dfeb;font-size:12px;line-height:1.6}
+  .checkrow {display:flex;align-items:center;gap:9px;color:#d5dde9;font-size:13px;cursor:pointer}
+  .checkrow input {accent-color:var(--gold);width:16px;height:16px}
+  .side-actions {display:flex;gap:7px;flex-wrap:wrap}
+  .selected-box {border:1px solid #43536b;border-radius:11px;padding:12px;background:#192336}
+  .selected-empty {font-size:12px;line-height:1.7;color:var(--muted)}
+  .selected-heading {font-size:13px;color:#fff1cd;font-weight:700;margin-bottom:2px}
+  .hint-box {border-top:1px solid #334057;padding-top:14px;margin-top:10px}
+  .hint-box p {margin:5px 0;font-size:12px;line-height:1.6;color:var(--muted)}
+  .main {min-width:0;flex:1;display:flex;flex-direction:column}
+  .board-tools {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px 10px 18px;background:#151d2b;border-bottom:1px solid #354057}
+  .board-tools .name {font-size:13px;color:#ead7ad;font-weight:700}
+  .status {color:#aebacb;font-size:12px}
+  .board-viewport {flex:1;min-height:0;overflow:auto;background:#0c111b;padding:17px}
+  .board {position:relative;isolation:isolate;min-width:1040px;width:100%;height:790px;overflow:hidden;user-select:none;background:
+       radial-gradient(ellipse at 50% 40%,#23333b 0%,#172c32 49%,#13232c 100%);
+       border:1px solid #627477;border-radius:14px;box-shadow:inset 0 0 80px #0007,0 14px 28px #0005}
+  .board::before {content:"";position:absolute;inset:13px;border:1px solid #b4a0785c;border-radius:8px;pointer-events:none}
+  .board::after {content:"✦";position:absolute;left:50%;top:50%;font-size:350px;font-family:Georgia,serif;color:#a0bdb00b;transform:translate(-50%,-50%);pointer-events:none;z-index:0}
+  .board-heading {position:absolute;top:24px;left:34px;right:34px;pointer-events:none;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+  .board-heading .reading-title {font-family:Georgia,"Yu Mincho",serif;color:#e7cf9a;letter-spacing:.10em;font-size:16px}
+  .board-heading .reading-sub {font-size:12px;color:#d0dce0;margin-top:3px;max-width:680px;overflow-wrap:anywhere}
+  .board-heading .stamp {color:#b7c5c8;font-size:11px;text-align:right;white-space:nowrap}
+  .slot {position:absolute;z-index:1;width:var(--card-w);height:var(--card-h);transform:translate(-50%,-50%);border:1px dashed #b3bdad73;border-radius:7px;display:flex;align-items:center;justify-content:center;flex-direction:column;pointer-events:none;color:#ccd7d1ad;text-align:center;gap:5px}
+  .slot.sideways {width:var(--card-h);height:var(--card-w)}
+  .slot span {font-size:23px;font-family:Georgia,serif;color:#d8cdad6e}
+  .slot small {max-width:180px;font-size:11px;padding:0 5px;line-height:1.3}
+  .board-card {position:absolute;z-index:5;left:50%;top:50%;width:var(--card-w);transform:translate(-50%,-50%);touch-action:none;cursor:grab;outline:0;filter:drop-shadow(0 5px 7px #0008)}
+  .board-card.dragging {cursor:grabbing;z-index:60!important;filter:drop-shadow(0 14px 18px #000b)}
+  .board-card.selected .card-visual {box-shadow:0 0 0 3px #f9d38a,0 5px 18px #000a}
+  .board-card .visual-holder {height:var(--card-h);display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .board-card .card-visual {position:relative;overflow:hidden;flex:none;width:var(--card-w);height:var(--card-h);border:3px solid #cab17c;border-radius:8px;background:#263249;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px #000a;transition:box-shadow .14s}
+  .board-card .card-visual.sideways {transform:rotate(90deg)}
+  .board-card .card-visual img {position:absolute;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none;user-select:none}
+  .board-card .card-visual img.reversed {transform:rotate(180deg)}
+  .image-fallback {position:absolute;inset:0;background:linear-gradient(140deg,#1e3543,#4b3753);display:flex;align-items:center;justify-content:center;flex-direction:column;color:#ead6aa;font-size:14px;font-weight:700;text-align:center;padding:8px;gap:8px}
+  .image-fallback small {font-size:10px;color:#d2cfca;font-weight:400}
+  .card-captions {position:absolute;left:50%;top:calc(100% + 6px);transform:translateX(-50%);width:max-content;max-width:calc(var(--card-w) + 42px);display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;pointer-events:none}
+  .board-card[data-sideways="true"] .card-captions {top:calc(50% + (var(--card-w) / 2) + 8px)}
+  .card-label {background:#0d1721e8;color:#fff0ca;border:1px solid #c5ac78a8;border-radius:7px;padding:4px 8px;font-size:11px;line-height:1.35;white-space:normal;max-width:calc(var(--card-w) + 46px);overflow-wrap:anywhere}
+  .card-result {background:#071018d9;color:#d7e6ed;border:1px solid #6a8492ba;border-radius:5px;padding:3px 7px;font-size:10px;white-space:nowrap}
+  .card-result.reverse {color:#ffceb9;border-color:#b57968}
+  .ghost {position:fixed;z-index:999;pointer-events:none;width:var(--card-w);height:var(--card-h);opacity:.78;transform:translate(-50%,-48%);border:3px solid #d5bb83;border-radius:8px;background:linear-gradient(130deg,#263a50,#4e3857);box-shadow:0 15px 25px #0008;display:grid;place-items:center;color:#e0d1a6}
+  .ghost img {width:100%;height:100%;object-fit:fill;border-radius:4px}
+  .board-footnote {padding:8px 18px 12px;background:#101826;color:#9cacc2;font-size:11px;line-height:1.5}
+  .reading-report {position:absolute;bottom:24px;left:30px;max-width:420px;z-index:3;border-radius:8px;background:#101d2699;padding:8px 10px;font-size:11px;color:#cddce2;pointer-events:none}
+  .reading-report:empty {display:none}
+  .toast {position:fixed;bottom:22px;right:22px;background:#213d43;color:white;padding:12px 15px;border:1px solid #81b0b5;border-radius:9px;z-index:120;box-shadow:0 5px 18px #0008;max-width:390px;font-size:13px;pointer-events:none}
+  .footer-message {font-size:11px;color:#96a7ba;margin-top:8px;line-height:1.5}
+  body.capture .topbar,body.capture .sidebar,body.capture .board-tools,body.capture .board-footnote {display:none}
+  body.capture .board-viewport {padding:7px;overflow:auto}
+  body.capture .board {height:calc(100vh - 16px);min-height:700px}
+  .capture-exit {position:fixed;z-index:100;bottom:12px;right:12px;display:none;opacity:.24;transition:opacity .2s}
+  .capture-exit:hover {opacity:1}
+  body.capture .capture-exit {display:block}
+  @media (max-width:950px) { .layout{flex-direction:column}.sidebar{width:auto;max-height:none;border-right:0;border-bottom:1px solid #39485f}.board-viewport{min-height:600px}.topbar{padding:12px}.board-tools{padding:10px}.group{margin-bottom:13px} }
+  @media (prefers-reduced-motion:reduce) {*,*::before,*::after{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark">✧</div><div><h1>Tarot Reading ver2</h1><div class="sub">ランダム抽選 × 自由配置 × AI鑑定</div></div></div>
+    <div class="top-actions">
+      <button class="btn" id="copyBtn">鑑定用テキストをコピー</button>
+      <button class="btn" id="captureBtn">スクショ表示</button>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <section class="group">
+        <h2 class="group-title">01 / 使用カード</h2>
+        <div class="choice-row" id="deckChoices">
+          <button type="button" class="choice-btn active" data-deck="major"><strong>大アルカナ</strong>22枚</button>
+          <button type="button" class="choice-btn" data-deck="full"><strong>大 ＋ 小</strong>78枚</button>
+        </div>
+        <label class="form-label" for="spreadSelect">展開法（スプレッド）</label>
+        <select class="field" id="spreadSelect">
+          <option value="free">自由配置</option>
+          <option value="one">ワンオラクル（1枚）</option>
+          <option value="threeTime">スリーカード：過去・現在・未来（3枚）</option>
+          <option value="threeAdvice">スリーカード：現状・障害・助言（3枚）</option>
+          <option value="five">ファイブカード（5枚）</option>
+          <option value="seven">ホースシュー（7枚）</option>
+          <option value="celtic">ケルト十字（10枚）</option>
+        </select>
+        <label class="form-label" for="question">相談・質問（スクショ内に表示）</label>
+        <textarea class="field" id="question" rows="2" maxlength="300" placeholder="例：今後3か月の仕事運は？"></textarea>
+        <div class="footer-message">配置ガイドは補助線。位置は自由に変更できるわ。</div>
+      </section>
+      <section class="group">
+        <h2 class="group-title">02 / シャッフルと抽選</h2>
+        <label class="checkrow"><input type="checkbox" id="reverseCheck" checked>逆位置を使う（正逆50%）</label>
+        <div class="deck-station">
+          <div class="drawpile" id="drawpile" role="button" aria-label="山札からカードを引く。盤面へドラッグまたはクリック" tabindex="0"><div class="pile-fallback">✦</div></div>
+          <div class="deck-info"><strong id="remainingCount">22</strong><small>山札の残り枚数</small><div class="hint">カードを盤面へ<br>ドラッグして配置</div></div>
+        </div>
+        <div class="side-actions">
+          <button type="button" class="btn primary" id="shuffleBtn">↻ シャッフル / 初期化</button>
+          <button type="button" class="btn" id="drawBtn">1枚引く</button>
+        </div>
+        <p class="muted" id="countInfo">配置 0 枚 / 22 枚</p>
+      </section>
+      <section class="group">
+        <h2 class="group-title">03 / 選択したカード</h2>
+        <div class="selected-box" id="selectedBox"><div class="selected-empty">盤面のカードをクリックすると表裏が切り替わり、ここから配置や正逆を調整できるわ。</div></div>
+      </section>
+      <section class="hint-box">
+        <h2 class="group-title">使い方</h2>
+        <p>① 山札からカードを盤面へドラッグ。山札のクリックでも1枚配置できる。</p>
+        <p>② 盤面のカードをクリックしてめくる。ドラッグで動かす。</p>
+        <p>③ 必要に応じて正逆・横向き・位置名を調整する。</p>
+        <p>④ 「スクショ表示」にして Windows は <b>Win + Shift + S</b> で撮影。ChatGPTに画像を渡す。</p>
+        <p>※乱数は <code>crypto.getRandomValues()</code> で生成。カードは戻さず引く。</p>
+      </section>
+    </aside>
+    <main class="main">
+      <div class="board-tools"><span class="name" id="layoutTitle">自由配置</span><span class="status" id="boardStatus">山札からドラッグして配置。カードをクリックするとめくれます。</span></div>
+      <div class="board-viewport" id="boardViewport">
+        <div class="board" id="board" aria-label="タロットカードの自由配置ボード">
+          <div class="board-heading"><div><div class="reading-title" id="headingSpread">FREE READING</div><div class="reading-sub" id="headingQuestion">相談内容：未入力</div></div><div class="stamp" id="headingInfo">大アルカナ 22枚</div></div>
+          <div id="slotsLayer"></div>
+          <div id="cardsLayer"></div>
+          <div class="reading-report" id="readingReport"></div>
+        </div>
+      </div>
+      <div class="board-footnote">画像フォルダ：<code>Img_Tarot_Reading/</code>（HTMLと同じ場所）　｜　クリック：表裏切替　｜　ドラッグ：移動　｜　逆位置・横向き：左の選択カードから　｜　スクショ表示は Esc で戻る</div>
+    </main>
+  </div>
+</div>
+<button class="btn capture-exit" id="captureExit" title="Esc キーでも戻れます">編集画面に戻る (Esc)</button>
+<script>
+(() => {
+  'use strict';
+  const IMG_DIR = 'Img_Tarot_Reading/';
+  const PAD = n => String(n).padStart(2,'0');
+
+  const MAJOR_NAMES = [
+    '愚者','魔術師','女教皇','女帝','皇帝','教皇','恋人','戦車','力','隠者','運命の輪','正義','吊るされた男','死神','節制','悪魔','塔','星','月','太陽','審判','世界'
+  ];
+  const MINOR_NAMES = [
+    'ワンドのエース','ワンドの2','ワンドの3','ワンドの4','ワンドの5','ワンドの6','ワンドの7','ワンドの8','ワンドの9','ワンドの10','ワンドのペイジ','ワンドのナイト','ワンドのクイーン','ワンドのキング',
+    'カップのエース','カップの2','カップの3','カップの4','カップの5','カップの6','カップの7','カップの8','カップの9','カップの10','カップのペイジ','カップのナイト','カップのクイーン','カップのキング',
+    'ソードのエース','ソードの2','ソードの3','ソードの4','ソードの5','ソードの6','ソードの7','ソードの8','ソードの9','ソードの10','ソードのペイジ','ソードのナイト','ソードのクイーン','ソードのキング',
+    'ペンタクルのエース','ペンタクルの2','ペンタクルの3','ペンタクルの4','ペンタクルの5','ペンタクルの6','ペンタクルの7','ペンタクルの8','ペンタクルの9','ペンタクルの10','ペンタクルのペイジ','ペンタクルのナイト','ペンタクルのクイーン','ペンタクルのキング'
+  ];
+  const SPREADS = {
+    free: {name:'自由配置', en:'FREE READING', slots:[]},
+    one: {name:'ワンオラクル',en:'ONE CARD',slots:[{name:'結果・メッセージ',x:50,y:49}]},
+    threeTime: {name:'スリーカード：過去・現在・未来',en:'PAST · PRESENT · FUTURE',slots:[{name:'過去',x:23,y:48},{name:'現在',x:50,y:48},{name:'未来',x:77,y:48}]},
+    threeAdvice: {name:'スリーカード：現状・障害・助言',en:'SITUATION · OBSTACLE · ADVICE',slots:[{name:'現状',x:23,y:48},{name:'障害',x:50,y:48},{name:'助言',x:77,y:48}]},
+    five: {name:'ファイブカード',en:'FIVE CARD SPREAD',slots:[{name:'現状',x:50,y:48},{name:'障害',x:28,y:48},{name:'意識・背景',x:50,y:19},{name:'助言',x:72,y:48},{name:'結果',x:50,y:76}]},
+    seven: {name:'ホースシュー',en:'HORSESHOE',slots:[{name:'過去',x:12,y:34},{name:'現在',x:24,y:57},{name:'隠れた影響',x:37,y:66},{name:'障害',x:50,y:68},{name:'周囲の影響',x:63,y:66},{name:'助言',x:76,y:57},{name:'結果',x:88,y:34}]},
+    celtic: {name:'ケルト十字',en:'CELTIC CROSS',slots:[{name:'現状',x:36,y:46},{name:'障害・交差',x:36,y:46,sideways:true},{name:'潜在意識・基盤',x:36,y:76},{name:'過去',x:16,y:46},{name:'顕在意識・目標',x:36,y:17},{name:'近い未来',x:57,y:46},{name:'自分の立場',x:84,y:77},{name:'周囲・環境',x:84,y:57},{name:'希望・不安',x:84,y:37},{name:'最終結果',x:84,y:17}]}
+  };
+  const el = id => document.getElementById(id);
+  const state = {deckMode:'major',spread:'free',reverse:true,deck:[],cards:[],discarded:[],selectedId:null,serial:0,seq:0};
+  let activeDrag = null, toastTimer = null;
+
+  // 上限未満の整数を偏りなく抽選。単純な剰余は採用しない。
+  function secureInt(max) {
+    if (!Number.isInteger(max) || max <= 0 || max > 0xFFFFFFFF) throw new Error('乱数上限が不正です');
+    const range = 0x100000000;
+    const limit = Math.floor(range / max) * max;
+    const buf = new Uint32Array(1);
+    let value;
+    do { crypto.getRandomValues(buf); value = buf[0]; } while (value >= limit);
+    return value % max;
+  }
+  function createDeck(mode) {
+    const result = [];
+    for(let i=1;i<=22;i++) result.push({type:'Major',number:i});
+    if(mode==='full') for(let i=1;i<=56;i++) result.push({type:'Minor',number:i});
+    for(let i=result.length-1;i>0;i--) { const j=secureInt(i+1); [result[i],result[j]]=[result[j],result[i]]; }
+    return result;
+  }
+  function imagePath(card) {return IMG_DIR + (card.type==='Major'?'Major_Arcana_':'Minor_Arcana_') + PAD(card.number) + '.png';}
+  function cardId(card) {return (card.type==='Major'?'大':'小') + PAD(card.number);}
+  function fullCardId(card) {return (card.type==='Major'?'Major_Arcana_':'Minor_Arcana_') + PAD(card.number);}
+  function getCardName(card) { return card.type==='Major' ? (MAJOR_NAMES[card.number-1] || `大アルカナ${PAD(card.number)}`) : (MINOR_NAMES[card.number-1] || `小アルカナ${PAD(card.number)}`); }
+  function safePlain(s) {return (s||'').replace(/[\r\n]+/g,' ').trim();}
+  function showToast(message) {
+    let t=el('toast'); if (!t) {t=document.createElement('div');t.id='toast';t.className='toast';document.body.appendChild(t);} t.textContent=message;
+    clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.remove(),3200);
+  }
+  function getSpread(){return SPREADS[state.spread];}
+  function getSlotName(card) {return card.customLabel !== null ? card.customLabel : (card.slotIndex===null ? card.drawIndex+'枚目' : (getSpread().slots[card.slotIndex]?.name || card.drawIndex+'枚目'));}
+  function openSlotNear(x,y,currentId,onlyIfClose=true) {
+    const slots = getSpread().slots;
+    if(!slots.length)return null;
+    let candidates=slots.map((s,i)=>({i,d:Math.hypot((s.x-x)*1.1,s.y-y)})).sort((a,b)=>a.d-b.d);
+    for (const c of candidates) {
+      if(onlyIfClose && c.d > 13)return null;
+      const used=state.cards.some(card=>card.slotIndex===c.i && card.uid!==currentId);
+      if(!used) return c.i;
+    }
+    return null;
+  }
+  function positionFromEvent(event){
+    const r=el('board').getBoundingClientRect();
+    return {x:Math.min(93,Math.max(7,(event.clientX-r.left)/r.width*100)),y:Math.min(84,Math.max(18,(event.clientY-r.top)/r.height*100))};
+  }
+  function insideBoard(event) {
+    const r=el('board').getBoundingClientRect();
+    return event.clientX>=r.left && event.clientX<=r.right && event.clientY>=r.top && event.clientY<=r.bottom;
+  }
+  function defaultPosition(){
+    const slots=getSpread().slots;
+    for(let i=0;i<slots.length;i++) {
+      if(!state.cards.some(c=>c.slotIndex===i)) return {x:slots[i].x,y:slots[i].y,slotIndex:i};
+    }
+    const n=state.cards.length;
+    return {x:16+((n%6)*14),y:28+(Math.floor(n/6)%3)*25,slotIndex:null};
+  }
+  function drawCard(pos=null) {
+    if(!state.deck.length) {showToast('山札が空よ。新しくシャッフルしてね。');return;}
+    const data=state.deck.pop();
+    const reverse = state.reverse ? secureInt(2)===1 : false;
+    const p=pos||defaultPosition();
+    let slotIndex = p.slotIndex === undefined ? openSlotNear(p.x,p.y,null,true) : p.slotIndex;
+    let x=p.x, y=p.y;
+    if(slotIndex!==null){x=getSpread().slots[slotIndex].x;y=getSpread().slots[slotIndex].y;}
+    const newCard={...data,uid:++state.serial,drawIndex:++state.seq,x,y,slotIndex,customLabel:null,reversed:reverse,initialReversed:reverse,sideways:slotIndex!==null&&!!getSpread().slots[slotIndex].sideways,faceUp:false,z:state.serial};
+    state.cards.push(newCard);state.selectedId=newCard.uid;
+    render();
+  }
+  function resetDeck(confirmNeeded=true) {
+    if(confirmNeeded && (state.cards.length||state.discarded.length) && !confirm('盤面のカードをすべて片づけて、シャッフルし直す？\n現在の配置と抽選結果は失われます。'))return false;
+    try { state.deck=createDeck(state.deckMode); }
+    catch(err){ showToast('安全な乱数が利用できません。このブラウザでは抽選できません。');return false; }
+    state.cards=[];state.discarded=[];state.selectedId=null;state.seq=0;render();return true;
+  }
+  function setSpread(key){
+    state.spread=key;
+    state.cards.forEach(card=>{card.slotIndex=null;card.sideways=false;});
+    render();
+    if(state.cards.length)showToast('展開法を変更したので、配置位置の自動ラベルを解除したわ。');
+  }
+  function setDeck(mode){
+    if(mode===state.deckMode)return;
+    if((state.cards.length||state.discarded.length)&&!confirm('カードの種類を変更すると、盤面が初期化されるわ。続ける？'))return;
+    state.deckMode=mode;resetDeck(false);
+  }
+  function addPhoto(parent,src,fallbackText,extraClass='') {
+    const fb=document.createElement('div');fb.className='image-fallback';
+    const t=document.createElement('div');t.textContent=fallbackText;fb.appendChild(t);
+    const sub=document.createElement('small');sub.textContent='画像が見つかりません';fb.appendChild(sub);
+    parent.appendChild(fb);
+    const img=document.createElement('img');img.alt=fallbackText;img.draggable=false;
+    if(extraClass)img.className=extraClass;
+    img.onload=()=>{fb.style.display='none'};
+    img.onerror=()=>{img.style.display='none'};
+    img.src=src;parent.appendChild(img);
+  }
+  function updatePile() {
+    const pile=el('drawpile');pile.classList.toggle('empty',!state.deck.length);
+    pile.innerHTML='';if(state.deck.length) addPhoto(pile,IMG_DIR+'Back_Card.png','✦');
+    else {const d=document.createElement('div');d.className='pile-fallback';d.textContent='空';pile.appendChild(d);}
+    el('remainingCount').textContent=state.deck.length;
+    el('drawBtn').disabled=!state.deck.length;
+    el('countInfo').textContent=`配置 ${state.cards.length} 枚 / ${state.deck.length+state.cards.length+state.discarded.length} 枚　（公開 ${state.cards.filter(c=>c.faceUp).length} 枚・除外 ${state.discarded.length} 枚）`;
+    for (const b of el('deckChoices').querySelectorAll('[data-deck]'))b.classList.toggle('active',b.dataset.deck===state.deckMode);
+    el('spreadSelect').value=state.spread;
+    el('reverseCheck').checked=state.reverse;
+    el('reverseCheck').disabled=state.cards.length>0||state.discarded.length>0;
+    el('reverseCheck').title=el('reverseCheck').disabled?'抽選開始後に変更する場合はシャッフルして初期化してください。':'';
+  }
+  function renderSlots(){
+    const layer=el('slotsLayer');layer.replaceChildren();
+    getSpread().slots.forEach((s,i)=>{
+      const d=document.createElement('div');d.className='slot'+(s.sideways?' sideways':'');
+      d.style.left=s.x+'%';d.style.top=s.y+'%';
+      const number=document.createElement('span');number.textContent=i+1;
+      const label=document.createElement('small');label.textContent=s.name;
+      d.append(number,label);layer.appendChild(d);
+    });
+  }
+  function renderCards(){
+    const layer=el('cardsLayer');layer.replaceChildren();
+    state.cards.forEach(card=>{
+      const node=document.createElement('div');node.className='board-card'+(card.uid===state.selectedId?' selected':'');
+      node.setAttribute('tabindex','0');node.setAttribute('role','button');
+      node.setAttribute('aria-label',`${card.drawIndex}枚目、${getSlotName(card)}、${card.faceUp?getCardName(card)+' '+(card.reversed?'逆位置':'正位置'):'裏向き'}`);
+      node.style.left=card.x+'%';node.style.top=card.y+'%';node.style.zIndex=card.z+5;
+      node.dataset.uid=card.uid;node.dataset.sideways=card.sideways?'true':'false';
+      const holder=document.createElement('div');holder.className='visual-holder';
+      const visual=document.createElement('div');visual.className='card-visual'+(card.sideways?' sideways':'');
+      addPhoto(visual,card.faceUp?imagePath(card):IMG_DIR+'Back_Card.png',card.faceUp?cardId(card):'✦',card.faceUp&&card.reversed?'reversed':'');
+      holder.appendChild(visual);node.appendChild(holder);
+      const captions=document.createElement('div');captions.className='card-captions';
+      if(card.faceUp){
+        const name=document.createElement('span');name.className='card-label';name.textContent=getCardName(card);
+        captions.appendChild(name);
+        const r=document.createElement('span');r.className='card-result'+(card.reversed?' reverse':'');r.textContent=`${card.reversed?'逆位置':'正位置'}${card.reversed!==card.initialReversed?' ※手動':''}`;
+        captions.appendChild(r);
+      } else {
+        const name=document.createElement('span');name.className='card-label';name.textContent=(card.slotIndex!==null?`${card.slotIndex+1}. `:'')+getSlotName(card);
+        captions.appendChild(name);
+      }
+      node.appendChild(captions);
+      node.addEventListener('pointerdown',e=>startPointer(e,'move',card.uid));
+      node.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();state.selectedId=card.uid;card.faceUp=!card.faceUp;card.z=++state.serial;render();}});
+      layer.appendChild(node);
+    });
+  }
+  function updateHeadings() {
+    const spread=getSpread();
+    el('layoutTitle').textContent=spread.name;
+    el('headingSpread').textContent=spread.en;
+    el('headingQuestion').textContent='相談内容：'+(safePlain(el('question').value)||'未入力');
+    el('headingInfo').textContent=`${state.deckMode==='major'?'大アルカナ22枚':'大＋小アルカナ78枚'} / ${state.reverse?'逆位置あり':'正位置のみ'}`;
+    el('boardStatus').textContent=`配置 ${state.cards.length}枚 / 公開 ${state.cards.filter(c=>c.faceUp).length}枚　｜　山札をドラッグ、カードをクリックでめくる`;
+    // スクショに抽選結果が判読できるよう、読取り情報は画面のカードラベルに表示する。
+    el('readingReport').textContent=state.discarded.length?`※抽選後に除外したカード：${state.discarded.length}枚`:'';
+  }
+  function selectedCard(){return state.cards.find(c=>c.uid===state.selectedId)||null;}
+  function makeButton(label,onClick,cls='btn small') {const b=document.createElement('button');b.type='button';b.className=cls;b.textContent=label;b.addEventListener('click',onClick);return b;}
+  function renderSelected(){
+    const root=el('selectedBox');root.replaceChildren();
+    const c=selectedCard();
+    if(!c){const p=document.createElement('div');p.className='selected-empty';p.textContent='カードが未選択よ。盤面に配置したカードをクリックすると、ここで正逆・横向き・ラベルを編集できるわ。';root.appendChild(p);return;}
+    const title=document.createElement('div');title.className='selected-heading';title.textContent=`${c.drawIndex}枚目・${c.faceUp?fullCardId(c):'裏向き（未公開）'}`;root.appendChild(title);
+    const small=document.createElement('div');small.className='muted';small.textContent=c.faceUp?((c.reversed?'逆位置':'正位置')+(c.reversed!==c.initialReversed?'（手動変更済み）':'')):'めくるまでカード名・正逆は非公開';root.appendChild(small);
+    const row=document.createElement('div');row.className='side-actions';row.style.marginTop='10px';
+    row.append(
+      makeButton(c.faceUp?'裏返す':'めくる',()=>{c.faceUp=!c.faceUp;render();}),
+      makeButton('正位置 / 逆位置',()=>{c.reversed=!c.reversed;render();}),
+      makeButton(c.sideways?'縦向きに戻す':'横向き（90°）',()=>{c.sideways=!c.sideways;render();})
+    );root.appendChild(row);
+    const lbl=document.createElement('label');lbl.className='form-label';lbl.textContent='位置名（自由に変更可能）';root.appendChild(lbl);
+    const input=document.createElement('input');input.className='field';input.type='text';input.maxLength=40;input.value=getSlotName(c);
+    input.addEventListener('change',()=>{c.customLabel=input.value.trim()||null;render();});
+    root.appendChild(input);
+    const row2=document.createElement('div');row2.className='side-actions';row2.style.marginTop='10px';
+    row2.append(
+      makeButton('位置名を自動に戻す',()=>{c.customLabel=null;render();}),
+      makeButton('盤面から除外',()=>removeCard(c.uid),'btn small warn')
+    );root.appendChild(row2);
+  }
+  function removeCard(uid){
+    const i=state.cards.findIndex(c=>c.uid===uid);if(i<0)return;
+    if(!confirm('このカードを盤面から除外する？\n山札には戻らず、除外した枚数が記録されるわ。'))return;
+    // 戻す場合でも不公平にならないよう、非公開の山札へ単純に混ぜず「除外済み」とする。
+    state.discarded.push(state.cards[i]);state.cards.splice(i,1);state.selectedId=null;render();showToast('カードを盤面から除外したわ。山札には戻していない。');
+  }
+  function render(){updatePile();renderSlots();renderCards();renderSelected();updateHeadings();}
+
+  function endGhost(){if(activeDrag?.ghost)activeDrag.ghost.remove();}
+  function startPointer(e,kind,uid=null){
+    if(e.button!==undefined && e.button!==0)return;
+    if(kind==='draw'&&!state.deck.length)return;
+    if(activeDrag)return;
+    e.preventDefault();
+    let card = kind==='move'?state.cards.find(c=>c.uid===uid):null;
+    if(card){state.selectedId=uid;card.z=++state.serial;}
+    activeDrag={kind,uid,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,moved:false,ghost:null,original:card?{x:card.x,y:card.y,slotIndex:card.slotIndex,sideways:card.sideways}:null};
+    if(kind==='move') {const node=el('cardsLayer').querySelector(`[data-uid="${uid}"]`); if(node){node.classList.add('dragging');node.style.zIndex=100;}}
+    window.addEventListener('pointermove',movePointer,{passive:false});
+    window.addEventListener('pointerup',finishPointer);
+    window.addEventListener('pointercancel',cancelPointer);
+  }
+  function movePointer(e){
+    if(!activeDrag||e.pointerId!==activeDrag.pointerId)return;
+    e.preventDefault();
+    const d=Math.hypot(e.clientX-activeDrag.startX,e.clientY-activeDrag.startY);
+    if(d>7)activeDrag.moved=true;
+    if(!activeDrag.moved)return;
+    if(activeDrag.kind==='draw'){
+      if(!activeDrag.ghost){const g=document.createElement('div');g.className='ghost';addPhoto(g,IMG_DIR+'Back_Card.png','✦');document.body.appendChild(g);activeDrag.ghost=g;}
+      activeDrag.ghost.style.left=e.clientX+'px';activeDrag.ghost.style.top=e.clientY+'px';
+    } else {
+      const c=state.cards.find(c=>c.uid===activeDrag.uid);if(!c)return;
+      const pos=positionFromEvent(e);c.x=pos.x;c.y=pos.y;
+      const node=el('cardsLayer').querySelector(`[data-uid="${c.uid}"]`);
+      if(node){node.style.left=c.x+'%';node.style.top=c.y+'%';}
+    }
+  }
+  function removePointerListeners(){window.removeEventListener('pointermove',movePointer);window.removeEventListener('pointerup',finishPointer);window.removeEventListener('pointercancel',cancelPointer);}
+  function finishPointer(e){
+    if(!activeDrag||e.pointerId!==activeDrag.pointerId)return;
+    const d=activeDrag;endGhost();removePointerListeners();activeDrag=null;
+    if(d.kind==='draw'){
+      if(d.moved){if(insideBoard(e))drawCard(positionFromEvent(e));else render();}
+      else drawCard();
+      return;
+    }
+    const c=state.cards.find(c=>c.uid===d.uid);
+    if(c){
+      if(d.moved){
+        const nextSlot=openSlotNear(c.x,c.y,c.uid,true);
+        c.slotIndex=nextSlot;
+        if(nextSlot!==null){c.x=getSpread().slots[nextSlot].x;c.y=getSpread().slots[nextSlot].y;}
+        // 横向きの状態はユーザーの意図を優先。ケルト十字の2番に新たに置いたときだけ自動で横向きに。
+        if(nextSlot!==null&&getSpread().slots[nextSlot].sideways)c.sideways=true;
+      }else c.faceUp=!c.faceUp;
+    }
+    render();
+  }
+  function cancelPointer(e){if(!activeDrag||e.pointerId!==activeDrag.pointerId)return;endGhost();removePointerListeners();activeDrag=null;render();}
+
+  function readoutText(){
+    const lines=[
+      '【タロット占い：抽選済み結果】',
+      `相談内容：${safePlain(el('question').value)||'未入力'}`,
+      `使用カード：${state.deckMode==='major'?'大アルカナ22枚':'大＋小アルカナ78枚'}`,
+      `展開法：${getSpread().name}`,
+      `逆位置：${state.reverse?'あり':'なし'}`,
+      `公開カード：${state.cards.filter(c=>c.faceUp).length}枚／配置${state.cards.length}枚`,
+      `抽選後に盤面から除外したカード：${state.discarded.length}枚`,
+      ''
+    ];
+    state.cards.forEach(c=>lines.push(`${c.drawIndex}枚目｜位置：${getSlotName(c)}｜${c.faceUp?`${getCardName(c)}（${fullCardId(c)}）｜${c.reversed?'逆位置':'正位置'}${c.reversed!==c.initialReversed?'｜正逆を手動変更':''}${c.sideways?'｜横向き配置':''}`:'未公開'}`));
+    state.discarded.forEach(c=>lines.push(`除外${c.drawIndex}枚目｜${c.faceUp?`${getCardName(c)}（${fullCardId(c)}）｜${c.reversed?'逆位置':'正位置'}${c.reversed!==c.initialReversed?'｜正逆を手動変更':''}`:'未公開のまま除外'}`));
+    lines.push('','以上のカードと位置だけを確定結果として使用し、引き直しや都合のよいカードへの変更をせずに解釈してください。画像ファイル番号の対応するカード名が不明な場合は、推測せず確認してください。');
+    return lines.join('\n');
+  }
+  async function copyResult(){
+    const s=readoutText();
+    try {await navigator.clipboard.writeText(s);showToast('鑑定用の抽選結果をコピーしたわ。');}
+    catch(e){
+      const ta=document.createElement('textarea');ta.value=s;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();
+      const ok=document.execCommand('copy');ta.remove();showToast(ok?'鑑定用テキストをコピーしたわ。':'自動コピーに失敗したわ。ブラウザの権限を確認してね。');
+    }
+  }
+  function capture(on){document.body.classList.toggle('capture',on);if(on)showToast('撮影用表示にしたわ。Windows は Win + Shift + S。Escで元に戻れる。');}
+  el('drawpile').addEventListener('pointerdown',e=>startPointer(e,'draw'));
+  el('drawpile').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();drawCard();}});
+  el('drawBtn').addEventListener('click',()=>drawCard());
+  el('shuffleBtn').addEventListener('click',()=>{if(resetDeck())showToast('暗号学的乱数でシャッフルしたわ。');});
+  el('deckChoices').addEventListener('click',e=>{const btn=e.target.closest('[data-deck]');if(btn)setDeck(btn.dataset.deck);});
+  el('spreadSelect').addEventListener('change',e=>setSpread(e.target.value));
+  el('question').addEventListener('input',updateHeadings);
+  el('reverseCheck').addEventListener('change',e=>{state.reverse=e.target.checked;updateHeadings();showToast('正逆の設定は次に引くカードから反映されるわ。');});
+  el('copyBtn').addEventListener('click',copyResult);
+  el('captureBtn').addEventListener('click',()=>capture(true));
+  el('captureExit').addEventListener('click',()=>capture(false));
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')capture(false);});
+  resetDeck(false);
+})();
+</script>
+</body>
+</html>
